@@ -171,7 +171,9 @@ def fly_records(tribe: Tribe, result: WindowResult, scores: np.ndarray, wallet: 
 
 def tribe_summary(tribe: Tribe, records: list[dict], scores: np.ndarray, result: WindowResult,
                   generation: int, seconds: float) -> dict:
-    ranked = sorted(records, key=lambda r: r["fitness"], reverse=True)
+    # Ranked on the raw scores, the way `breed` ranks them, so the hero named here is exactly
+    # the fly that survives first; the fitness inside a record is rounded for the log.
+    ranked = [records[i] for i in np.argsort(-scores, kind="stable")]
     equity, trades = result.final_equity, result.trades
     counts = np.stack([(result.actions == a).sum(axis=0) for a in range(3)]).sum(axis=1)
     variety = np.array([r["distinct_actions"] for r in records])
