@@ -1,14 +1,13 @@
-"""PLAN.md rule 1: running the agent never changes the brain."""
+"""PLAN.md rule 1: running the agent never changes the brain.
 
-import dataclasses
+The readout grouping both tribes share is tested in tests/test_fairness.py."""
 
 import numpy as np
 import pytest
 import torch
-from nfly.interface.decoders import default_readout_nodes
 
 from brain import Genome, TribeAgent
-from brain.agent import MIN_CALIBRATION_CHARTS, readout_groups
+from brain.agent import MIN_CALIBRATION_CHARTS
 
 POPULATION = 8
 CONNECTOME_TENSORS = {"pre", "post", "sign", "w0", "log_gain", "bias", "alpha_logit"}
@@ -40,15 +39,3 @@ def test_brain_weights_never_change(connectome, request, device, charts):
         assert after[name].data_ptr() != tensor.data_ptr()      # compared against a copy, not a view
         assert torch.equal(after[name], tensor), f"brain tensor {name} changed"
 
-
-def test_readout_groups_come_from_annotations_not_wiring(synthetic_connectome):
-    """Rule 6: the scrambled tribe must vote through exactly the same cell-type groups, so the
-    grouping may not depend on the edges. Shuffling every edge must leave it unchanged."""
-    conn = synthetic_connectome
-    readout_idx = default_readout_nodes(conn)
-    group_idx, group_size = readout_groups(conn, readout_idx)
-
-    shuffled = dataclasses.replace(conn, post=conn.post[torch.randperm(conn.n_edges)])
-    assert torch.equal(default_readout_nodes(shuffled), readout_idx)
-    shuffled_idx, shuffled_size = readout_groups(shuffled, readout_idx)
-    assert torch.equal(shuffled_idx, group_idx) and torch.equal(shuffled_size, group_size)
