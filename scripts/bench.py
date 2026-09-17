@@ -10,7 +10,8 @@ stepped under no_grad, the way evolution will use it (PLAN.md rule 1). Input enc
 and the portfolio are not included.
 
 The minutes-per-generation column assumes both tribes (real and scrambled, separate W) each
-step their whole population through one window, one tribe after the other.
+step their whole population through one window, one tribe after the other. It counts brain
+steps only, so it is a floor: the measured figure comes from a real run (run_summary.json).
 """
 
 from __future__ import annotations
@@ -42,11 +43,11 @@ class Row:
     ms_per_step: float
     peak_gb: float
 
-    def minutes_per_generation(self, candles: int, steps_per_candle: int) -> float:
-        return TRIBES * candles * steps_per_candle * self.ms_per_step / 60_000
+    def minutes_per_generation(self, bars: int, steps_per_candle: int) -> float:
+        return TRIBES * bars * steps_per_candle * self.ms_per_step / 60_000
 
-    def markdown(self, candles: int, steps_per_candle: int) -> str:
-        minutes = self.minutes_per_generation(candles, steps_per_candle)
+    def markdown(self, bars: int, steps_per_candle: int) -> str:
+        minutes = self.minutes_per_generation(bars, steps_per_candle)
         verdict = "yes" if minutes <= BUDGET_MIN else "no"
         return (f"| {self.subset} | {self.neurons:,} | {self.edges:,} | {self.population} | "
                 f"{self.ms_per_step:.2f} | {self.ms_per_step / self.population:.3f} | "
@@ -106,12 +107,12 @@ def bench_subset(full, name: str, args: argparse.Namespace, device: torch.device
 def print_table(rows: list[Row], args: argparse.Namespace, device: torch.device) -> None:
     print(f"\n{torch.cuda.get_device_name(device)}, torch {torch.version.__version__} (CUDA {torch.version.cuda}), "
           f"nfly {nfly_commit()[:12]}; median of {args.repeats} x {args.steps} steps after {args.warmup} warm-up")
-    print(f"Generation estimate: {TRIBES} tribes x {args.candles} candles x {args.steps_per_candle} steps/candle; "
+    print(f"Generation estimate: {TRIBES} tribes x {args.bars} bars x {args.steps_per_candle} steps/bar; "
           f"budget {BUDGET_MIN:.0f} min\n")
     print("| Subset | Neurons | Edges | Population | ms / step | ms / step per fly | Peak GPU GB | Est. min / generation | Fits budget |")
     print("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for row in rows:
-        print(row.markdown(args.candles, args.steps_per_candle))
+        print(row.markdown(args.bars, args.steps_per_candle))
 
 
 def main() -> None:
@@ -122,8 +123,8 @@ def main() -> None:
     p.add_argument("--steps", type=int, default=20, help="timed steps per repeat")
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--warmup", type=int, default=5)
-    p.add_argument("--candles", type=int, default=336, help="candles per generation window (2 weeks of 1h)")
-    p.add_argument("--steps-per-candle", type=int, default=2)
+    p.add_argument("--bars", type=int, default=576, help="bars per generation window (2 days of 5-minute bars)")
+    p.add_argument("--steps-per-candle", type=int, default=4)
     args = p.parse_args()
 
     device = require_gpu()
