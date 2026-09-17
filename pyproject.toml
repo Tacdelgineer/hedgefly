@@ -1,0 +1,11 @@
+[project]
+name = "hedgefly"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "gymnasium>=1.0",
+    "nfly",
+]
+
+[tool.uv.sources]
+nfly = { git = "https://github.com/zhengxuyu/nfly", rev = "82d227eed4a35cd261f81d202e0d30458c9e4e73" }
