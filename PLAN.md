@@ -79,7 +79,8 @@ Deadline: published within 7 days.
   Argmax, deterministic. Per-fly readout weights are part of the genome.
 - **Portfolio:** long or flat only. Starts at $1,000 (paper). A fly that drops
   below $500 is "broke" and dies for that generation.
-- **Brain steps per candle:** configurable (start with 2).
+- **Brain steps per candle:** configurable, 4. The chart needs 3 to 4 synapses to reach
+  the readout neurons, so fewer steps decide on a chart one or more candles old.
 
 ## EVOLUTION
 
@@ -168,9 +169,9 @@ The Spark will differ, so measure it.
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
 - Target: <= 10 minutes per generation for both tribes combined.
 - If too slow, cut in this order:
-  1. fewer brain steps per candle (1 instead of 2)
-  2. shorter window
-  3. population 50
+  1. shorter window
+  2. population 50
+  3. 3 steps per candle (never fewer: the chart would not reach the readout in time)
   4. smaller subset (last resort, because it removes motor readout neurons)
 - **Never cut:** the scrambled tribe, the locked test set, fees, the Fact Guard.
 
