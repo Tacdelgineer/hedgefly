@@ -3,7 +3,8 @@
     chart (64, 64) --nfly retina--> photoreceptor drive (K,) x per-fly chart gain map --+
     position flag (P,) x per-fly position gain --> proprioceptive neurons ---------------+--> u (P, N)
     u --frozen ConnectomeRNN, steps_per_candle steps--> h (P, N)
-    h[:, descending + motor] --fixed standardisation--> z (P, R) --per-fly votes--> logits (P, 3)
+    h[:, descending + motor] --fixed standardisation--> z (P, R) --mean per cell type--> (P, G)
+    (P, G) --per-fly votes--> logits (P, 3)
     argmax --> HOLD / BUY / SELL
 
 The market side's contract is brain/interface.md. The brain is built with no trainable edge
@@ -39,6 +40,7 @@ REST_STEPS = 64                    # steps with no input that settle the brain i
 # whole CNS they are 1,454 neurons that reach 99% of the readout neurons within two synapses.
 POSITION_CLASS = "mechanosensory_proprioceptive"
 
+STEPS_PER_CANDLE = 4               # PLAN.md: the chart needs 3 to 4 synapses to reach the readout
 MIN_CALIBRATION_CHARTS = 256
 MIN_STD = 1e-4
 Z_CLIP = 10.0
@@ -65,6 +67,8 @@ class Body:
     eye: RetinaEncoder
     position_idx: torch.Tensor     # (Q,) proprioceptive neurons
     readout_idx: torch.Tensor      # (R,) descending + motor neurons
+    group_idx: torch.Tensor        # (R,) cell-type group of each readout neuron
+    group_size: torch.Tensor       # (G,) neurons per group
     h_rest: torch.Tensor           # (N,) resting state; every window starts here
     steps_per_candle: int
 
@@ -91,6 +95,13 @@ class Body:
                                                 align_corners=True)
         return gains.flatten(1)
 
+    def vote_inputs(self, h: torch.Tensor, stats: "ReadoutStats") -> torch.Tensor:
+        """(P, G): the mean standardised activity of each readout cell type. Averaging rather
+        than summing keeps a 23-neuron type from shouting down a 1-neuron type."""
+        z = stats.standardise(h[:, self.readout_idx])
+        sums = torch.zeros(h.shape[0], len(self.group_size), device=h.device).index_add_(1, self.group_idx, z)
+        return sums / self.group_size
+
     def think(self, h: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         weights = self.brain.weights()
         for _ in range(self.steps_per_candle):
@@ -109,13 +120,14 @@ class TribeAgent:
         self.body, self.stats = body, stats
 
     @property
-    def n_readout(self) -> int:
-        return int(self.body.readout_idx.numel())
+    def n_groups(self) -> int:
+        """Readout cell types, the width of a genome's votes."""
+        return int(self.body.group_size.numel())
 
     @classmethod
     @torch.no_grad()
     def build(cls, conn: Connectome, calibration_charts: np.ndarray, device: str = "cuda",
-              steps_per_candle: int = 2) -> "TribeAgent":
+              steps_per_candle: int = STEPS_PER_CANDLE) -> "TribeAgent":
         """calibration_charts (T, 64, 64): consecutive charts from the evolve set only."""
         device = torch.device(device)
         if device.type == "cuda" and not torch.cuda.is_available():
@@ -127,14 +139,17 @@ class TribeAgent:
         if len(position_idx) == 0:
             raise ValueError(f"connectome has no {POSITION_CLASS} neurons for the position flag")
         chart_space = gym.spaces.Box(0.0, 1.0, (2, *CHART_SHAPE), np.float32)
+        readout_idx = default_readout_nodes(conn)
+        group_idx, group_size = readout_groups(conn, readout_idx)
         body = Body(brain, RetinaEncoder(conn, chart_space).to(device), position_idx.to(device),
-                    default_readout_nodes(conn).to(device), resting_state(brain), steps_per_candle)
+                    readout_idx.to(device), group_idx.to(device), group_size.to(device),
+                    resting_state(brain), steps_per_candle)
         return cls(body, calibrate(body, calibration_charts))
 
     @torch.no_grad()
     def start(self, genome: Genome) -> "FlyRun":
-        if genome.n_readout != self.n_readout:
-            raise ValueError(f"genome has {genome.n_readout} readout votes, the brain has {self.n_readout} readout neurons")
+        if genome.n_groups != self.n_groups:
+            raise ValueError(f"genome has {genome.n_groups} votes, the brain has {self.n_groups} readout cell types")
         return FlyRun(self, genome.to(self.body.device))
 
 
@@ -154,9 +169,22 @@ class FlyRun:
         position_t = position_tensor(position, genome.population, body.device)
         self.h = body.think(self.h, body.drive(chart_t, self.previous, position_t, genome))
         self.previous = chart_t
-        z = stats.standardise(self.h[:, body.readout_idx])                                  # (P, R)
-        logits = torch.baddbmm(genome.readout_b.unsqueeze(1), z.unsqueeze(1), genome.readout_w).squeeze(1)
+        votes = body.vote_inputs(self.h, stats).unsqueeze(1)                                # (P, 1, G)
+        logits = torch.baddbmm(genome.readout_b.unsqueeze(1), votes, genome.readout_w).squeeze(1)
         return logits.argmax(1).to(torch.int8).cpu().numpy()
+
+
+def readout_groups(conn: Connectome, readout_idx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Group the readout neurons by cell type: (group of each neuron (R,), neurons per group (G,)).
+
+    Groups come from the release's annotations and never from the wiring, so the real and the
+    scrambled tribe have exactly the same groups in the same order (PLAN.md rule 6). The few
+    readout neurons the release leaves untyped vote alone, keyed by their own body id."""
+    rows = conn.neurons.iloc[readout_idx.numpy()]
+    cell_type = rows["cell_type"].fillna("").astype(str).to_numpy()
+    key = np.where(cell_type != "", cell_type, "untyped:" + rows["root_id"].astype(str).to_numpy())
+    _, group_of, counts = np.unique(key, return_inverse=True, return_counts=True)
+    return torch.as_tensor(group_of, dtype=torch.long), torch.as_tensor(counts, dtype=torch.float32)
 
 
 def resting_state(brain: ConnectomeRNN) -> torch.Tensor:
@@ -174,7 +202,7 @@ def calibrate(body: Body, charts: np.ndarray) -> ReadoutStats:
     if charts.ndim != 3 or charts.shape[1:] != CHART_SHAPE or len(charts) < MIN_CALIBRATION_CHARTS:
         raise ValueError(f"calibration charts must have shape (T >= {MIN_CALIBRATION_CHARTS}, {CHART_SHAPE[0]}, "
                          f"{CHART_SHAPE[1]}), got {charts.shape}")
-    probe = Genome.neutral(2, int(body.readout_idx.numel())).to(body.device)
+    probe = Genome.neutral(2, len(body.group_size)).to(body.device)
     position = torch.tensor([0.0, 1.0], device=body.device)
     h, previous, samples = body.rest(2), None, []
     for chart in charts:

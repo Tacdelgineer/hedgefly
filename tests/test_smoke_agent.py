@@ -21,7 +21,7 @@ def test_100_random_flies_decide_on_336_charts(malecns, device, charts, capsys):
     torch.cuda.synchronize()
     build_s = time.perf_counter() - t0
 
-    genome = Genome.random(POPULATION, agent.n_readout, torch.Generator().manual_seed(0))
+    genome = Genome.random(POPULATION, agent.n_groups, torch.Generator().manual_seed(0))
     window, rng = charts(CANDLES, seed=1), np.random.default_rng(1)
     actions = np.empty((CANDLES, POPULATION), np.int8)
     run = agent.start(genome)
