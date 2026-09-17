@@ -24,8 +24,9 @@ Deadline: published within 7 days.
    that is loaded ONLY by `finale.py`. No other code may import or read it.
 4. **No lookahead.** A decision made at candle close t executes at candle t+1 open.
    There must be a unit test for this.
-5. **Fees on every trade.** Default 10 bps per side, configurable. Same rules for
-   every fly and every tribe.
+5. **Fees on every trade.** 5 bps per side, configurable, plus a minimum hold: a fly's
+   position cannot flip until 3 bars after the fill that opened it. Same fees, same hold,
+   same everything for every fly, every tribe and every competitor.
 6. **Fair scrambled tribe.** Degree-preserving edge swaps on the same edge list:
    swap targets (a->b, c->d) => (a->d, c->b). Each neuron keeps its in-degree and
    out-degree; sign and synapse count travel with the presynaptic neuron (Dale's law).
@@ -55,9 +56,12 @@ Deadline: published within 7 days.
   Fallback if it breaks: reimplement its published rate dynamics directly:
   `h[t+1] = (1 - alpha) * h[t] + alpha * min(ReLU(W h[t] + b + u[t]), h_max)`
 - Connectome: the 3 MaleCNS v1.0 flat-connectome feather files (~1.2 GB) into `data/`.
-- Market: BTC-USD 1h candles from a public source.
+- Market: BTC-USD **5-minute** bars from a public source (Coinbase Exchange, granularity 300).
+  Five-minute bars give a generation enough decisions to separate flies without stretching the
+  window over weeks of market regime.
   - `data/btc_evolve.parquet`: everything except the last 6 months
   - `data/btc_locked_test.parquet`: last 6 months (see rule 3)
+  - `data/split.json`: both ranges and bar counts, readable without opening the locked file
 - Narrator model: Qwen3.8-27B, served locally with an OpenAI-compatible endpoint
   (vLLM or Ollama).
 - Visual skills (Claude Code): `riso-rooms` and `hand-drawn-canvas-animation` from
@@ -72,24 +76,49 @@ Deadline: published within 7 days.
 - **Brain:** one shared sparse W on GPU. Batch dimension = flies.
   State shape `[population, N_neurons]`. The real tribe and the scrambled tribe
   each have their own W.
-- **Senses:** the last 64 candles rendered as a small chart image and fed through
-  the retina encoder ("the fly sees the chart"), plus one input for current
-  position (flat or long). Per-fly encoder gains are part of the genome.
-- **Actions:** readout from descending + motor neurons -> 3 logits: BUY / SELL / HOLD.
-  Argmax, deterministic. Per-fly readout weights are part of the genome.
-- **Portfolio:** long or flat only. Starts at $1,000 (paper). A fly that drops
-  below $500 is "broke" and dies for that generation.
+- **Senses:** the last 64 bars rendered as a small chart image and fed through the retina
+  encoder ("the fly sees the chart"), plus one input for current position (flat or long).
+  Per-fly encoder gains are part of the genome. Each chart is scaled to its own 64 bars, from
+  their lowest low to their highest high, so a fly sees shape and never an absolute price.
+- **The eye layout is the real fly's, for both tribes.** nfly places each photoreceptor at the
+  synapse-weighted mean hex coordinate of its columnar targets, so it is computed from edges.
+  Computing it from scrambled edges would scatter the scrambled tribe's photoreceptors at
+  random and hand the real tribe a working eye against a blind opponent. Both tribes therefore
+  get the eye layout computed from the REAL connectome: a deliberate fairness choice, so that
+  the only difference between the tribes is the wiring under test (rule 6). Tested, and noted
+  in README.
+- **Actions:** readout from descending + motor neurons -> 2 logits: BUY and SELL. There is no
+  HOLD logit; holding is what happens when neither vote is raised. Deterministic.
+  - Readout neurons vote in groups, one vote per group, and the grouping comes from the
+    release's annotations, never from the wiring, so both tribes vote through exactly the same
+    groups. **Descending neurons group by cell type; motor neurons pool by sub-class**, so the
+    fly's front / middle / hind legs, wings, neck and abdomen each vote as one muscle group
+    instead of 186 individual muscles.
+  - **A fly decides on the change in its own vote**, not on its level: each logit is compared
+    with a running average of that fly's own recent votes. A fly whose readout sits high all
+    window does not buy all window; a fly reacts when the chart moves it.
+  - Both rules are identical for the real and the scrambled tribe.
+- **Portfolio:** long or flat only. Starts at $1,000 (paper). Fitness is a log ratio and every
+  competitor starts at the same figure, so the bankroll is a scale factor and nothing else.
+  A fly that drops below $500 is "broke" and dies for that generation.
 - **Brain steps per candle:** configurable, 4. The chart needs 3 to 4 synapses to reach
   the readout neurons, so fewer steps decide on a chart one or more candles old.
 
 ## EVOLUTION
 
 - Each generation, every fly in both tribes trades the SAME randomly chosen window
-  of the evolve set (start: 2 weeks = 336 hourly candles).
+  of the evolve set: 2 days = 576 five-minute bars.
+- **Starting genomes that emit only one action are rejected** and redrawn: a fly that HOLDs
+  (or buys) all window carries no information for selection to work on. The share of random
+  genomes that use two or more actions is measured and reported; the chart and vote settings
+  above were tuned until it passed ~70%.
 - Fitness = log(final equity / 1000). Broke flies get the minimum fitness.
 - Top 20% survive. Children = parent genome + Gaussian noise. 10% random newcomers.
-- Baselines logged every generation on the same window: Random trader, Buy-and-hold.
-- Lineage: every fly records its parent id (for the family tree).
+- Competitors logged every generation on the same window, under the same fees, the same
+  minimum hold and the same rule-4 ordering: Momentum, Random, Buy-and-hold.
+- Lineage: every fly has a run-unique id and records its parent id (for the family tree).
+  The summary carries the top fly's id and its ancestor chain back to generation 0, so the
+  story can follow one hero lineage.
 - Clan tags (for the story): cluster flies by behavior (trade frequency, time in
   market, reaction to drops). Tag only; clans do not affect selection.
 - After each generation, write a compact summary `runs/<run_id>/gen_XXX_summary.json`
@@ -167,7 +196,9 @@ Reference point: nfly reports whole-CNS inference around 8 ms/step on an RTX 509
 The Spark will differ, so measure it.
 
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
+- A generation is 2 tribes x 576 bars x 4 brain steps per bar.
 - Target: <= 10 minutes per generation for both tribes combined.
+- Measured minutes per generation are reported from a real run, not from the benchmark.
 - If too slow, cut in this order:
   1. shorter window
   2. population 50
