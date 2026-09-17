@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "gymnasium>=1.0",
     "nfly",
+    "requests>=2.34.2",
 ]
 
 [tool.uv.sources]
