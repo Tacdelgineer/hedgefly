@@ -168,10 +168,10 @@ The Spark will differ, so measure it.
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
 - Target: <= 10 minutes per generation for both tribes combined.
 - If too slow, cut in this order:
-  1. smaller subset
-  2. fewer brain steps per candle
-  3. shorter window
-  4. population 50
+  1. fewer brain steps per candle (1 instead of 2)
+  2. shorter window
+  3. population 50
+  4. smaller subset (last resort, because it removes motor readout neurons)
 - **Never cut:** the scrambled tribe, the locked test set, fees, the Fact Guard.
 
 ## VISUAL CUT ORDER (if behind schedule)
