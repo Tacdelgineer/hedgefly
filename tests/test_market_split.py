@@ -22,10 +22,19 @@ def test_the_two_files_do_not_overlap_in_time(split):
     evolve_last = pd.Timestamp(split["evolve"]["last"])
     locked_first = pd.Timestamp(split["locked"]["first"])
     assert evolve_last < locked_first
-    assert locked_first - evolve_last == pd.Timedelta(hours=1)
+    assert locked_first - evolve_last == pd.Timedelta(seconds=split["granularity_seconds"])
     assert pd.Timestamp(split["evolve"]["first"]) < evolve_last
     assert locked_first < pd.Timestamp(split["locked"]["last"])
     assert split["evolve"]["rows"] > 0 and split["locked"]["rows"] > 0
+
+
+def test_the_candles_are_five_minute_bars(split):
+    """PLAN.md SETUP: the flies trade 5-minute bars, 576 of them to a generation window."""
+    assert split["granularity_seconds"] == 300
+    candles = load_evolve()
+    gaps = candles["timestamp"].diff().dropna()
+    assert gaps.min() == pd.Timedelta(minutes=5)
+    assert (gaps == pd.Timedelta(minutes=5)).mean() > 0.999      # a handful of exchange outages
 
 
 def test_the_evolve_file_stops_at_the_boundary(split):
