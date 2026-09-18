@@ -39,3 +39,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
     git push -q origin "$(git branch --show-current)"
     echo "committed and pushed: $(git log --oneline -1)"
 fi
+
+# The films last: they take a while, they are far too big for git (results/film is ignored), and
+# they must never turn a good refresh into a failed one.
+node scripts/record_hq.mjs --out results/film || echo "recording failed; the rest of the refresh stands"

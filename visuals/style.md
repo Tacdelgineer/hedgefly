@@ -27,7 +27,7 @@ does — so overprints brighten toward white rather than muddying toward black.
 | `gold` | `#ffc93c` | **the hero lineage** alone |
 | `amber` | `#ff7a1a` | **the locked test set** alone: the vault, its seals, its warnings |
 | `slate` | `#5b6cff` at low tone | architecture: walls, floors, furniture, the building itself |
-| `ghost` | `#d8dcff` at low tone | linework and small type on dark surfaces |
+| `ghost` | `#d8dcff` at low tone | linework and small type on dark surfaces; and the language model in the Model's Office, which is neither tribe, hero nor vault |
 
 **Colour means who, never how good.** Cyan and magenta must be equally bright and equally
 saturated — check them in greyscale; they should read as the same value. If one tribe's colour
