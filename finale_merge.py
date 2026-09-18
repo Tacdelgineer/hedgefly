@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from evolve.logs import write_json
-from finale_shared import PASSES, TRIBES, part_path
+from finale_shared import HOURLY_PASS, PASSES, TRIBES, part_path
 
 MUST_MATCH = ("run", "bars", "first_time", "last_time", "data", "rehearsal")
 
@@ -55,7 +55,31 @@ def merge(flies: dict, llm: dict | None) -> dict:
         if llm:
             joined["competitors"].update(llm["passes"][label]["competitors"])
         out["passes"][label] = joined
+    if HOURLY_PASS in flies["passes"]:
+        out["passes"][HOURLY_PASS] = flies["passes"][HOURLY_PASS]
+    out["cadence"] = cadence_chart(out, llm)
     return out
+
+
+def cadence_chart(merged: dict, llm: dict | None) -> dict:
+    """The three lines the cadence question needs, side by side, all at the real fees and on
+    the same bars: the champions acting every bar, the champions acting hourly, and the model
+    acting hourly. Missing lines are left out, never filled in."""
+    lines = {}
+    with_fees = merged["passes"]["with_fees"]
+    hourly = merged["passes"].get(HOURLY_PASS, {}).get("tribes", {})
+    for name in TRIBES:
+        every_bar = with_fees["tribes"].get(name, {}).get("mean_equity")
+        if every_bar is not None:
+            lines[f"{name}_every_bar"] = every_bar
+        hour = hourly.get(name, {}).get("mean_equity")
+        if hour is not None:
+            lines[f"{name}_hourly"] = hour
+    model = with_fees["competitors"].get("llm", {}).get("equity") if llm else None
+    if model is not None:
+        lines["llm_hourly"] = model
+    return {"fee_bps": with_fees["fee_bps"], "lines": lines,
+            "note": "flies are the mean of their champions; every line trades the same bars"}
 
 
 def table(merged: dict) -> None:
@@ -70,6 +94,18 @@ def table(merged: dict) -> None:
         a = with_fees["competitors"][name]["final_equity"]
         b = no_fees["competitors"].get(name, {}).get("final_equity", float("nan"))
         print(f"| {name} | ${a:,.2f} | ${b:,.2f} | ${b - a:,.2f} |")
+    hourly = merged["passes"].get(HOURLY_PASS)
+    if hourly:
+        print("\n| cadence, real fees | final equity |")
+        print("| --- | --- |")
+        for name in TRIBES:
+            if name in hourly["tribes"]:
+                every = float(np.mean(with_fees["tribes"][name]["final_equity"]))
+                hour = float(np.mean(hourly["tribes"][name]["final_equity"]))
+                print(f"| {name} champions, every bar | ${every:,.2f} |")
+                print(f"| {name} champions, hourly | ${hour:,.2f} |")
+        if "llm" in with_fees["competitors"]:
+            print(f"| llm, hourly | ${with_fees['competitors']['llm']['final_equity']:,.2f} |")
 
 
 def main() -> None:

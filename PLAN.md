@@ -134,6 +134,10 @@ Deadline: published within 7 days.
 - Trade the entire locked test set once. Same fees and rules.
 - Then trade it a SECOND time with the fees set to zero, to show what the fees cost. The
   minimum hold stays on: it is a rule, not a fee.
+- A THIRD pass for the champions alone, acting once an hour at the real fees, so they can be
+  charted against the language model under the same limit: flies every bar, flies hourly, the
+  model hourly, on identical bars. The brains still see every bar in the hourly pass; only
+  their decision on the hour is acted on. It costs a full five-minute pass.
 - Runs against the champions: Momentum, Random, Buy-and-hold, and a local Qwen3.8-27B given
   the same 64 bars described in words, on the same 0-100 window scale, obeying the same
   rules. The model is asked every `--llm-every` bars (hourly by default) and holds in

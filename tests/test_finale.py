@@ -105,3 +105,54 @@ def test_the_chart_can_be_drawn_without_the_language_model():
                         "no_fees": {"fee_bps": 0.0, "min_hold_bars": 3, "tribes": {}, "competitors": {}}}}
     joined = merge(flies, None)
     assert joined["parts"] == ["flies"] and "llm" not in joined
+
+
+def test_an_hourly_fly_sees_every_bar_but_acts_only_on_the_hour():
+    """The cadence pass limits how often a champion may act, not what its brain sees: the
+    brain must be called on every bar, and only every 12th decision may be a trade."""
+    import numpy as np
+    from finale_shared import HOURLY, acting_every
+    seen = []
+
+    def brain(chart, positions):
+        seen.append(chart)
+        return np.array([1, 2], np.int8)                  # it would buy and sell on every bar
+
+    first = 63
+    hourly = acting_every(brain, first, HOURLY)
+    acted = [hourly(bar, np.zeros(2, np.int8)) for bar in range(36)]
+    assert len(seen) == 36, "the brain must see every bar"
+    for k, actions in enumerate(acted):
+        expected = [1, 2] if k % HOURLY == 0 else [0, 0]
+        assert actions.tolist() == expected, f"bar {k}"
+
+
+def test_acting_every_bar_is_the_brain_itself():
+    from finale_shared import acting_every
+
+    def brain(chart, positions):
+        return chart
+    assert acting_every(brain, 0, 1) is brain
+
+
+def test_the_merge_carries_the_hourly_pass_and_lines_up_the_cadence_chart():
+    from finale_merge import merge
+    tribe = {"mean_equity": [1000.0, 1001.0], "final_equity": [1001.0]}
+    flies = {"run": "r", "bars": 2, "first_time": "a", "last_time": "b", "data": "d",
+             "rehearsal": False, "generation": 3, "champions_per_tribe": 10,
+             "entry_price": 1.0, "exit_price": 2.0,
+             "passes": {"with_fees": {"fee_bps": 5.0, "min_hold_bars": 3,
+                                      "tribes": {"real": tribe, "scrambled": tribe}, "competitors": {}},
+                        "no_fees": {"fee_bps": 0.0, "min_hold_bars": 3,
+                                    "tribes": {"real": tribe, "scrambled": tribe}, "competitors": {}},
+                        "hourly_with_fees": {"fee_bps": 5.0, "min_hold_bars": 3, "bars_between_decisions": 12,
+                                             "tribes": {"real": tribe, "scrambled": tribe}}}}
+    llm = {"run": "r", "bars": 2, "first_time": "a", "last_time": "b", "data": "d", "rehearsal": False,
+           "model": "Qwen3.8-27B", "bars_between_decisions": 12,
+           "passes": {"with_fees": {"competitors": {"llm": {"final_equity": 990.0, "equity": [1000.0, 990.0]}}},
+                      "no_fees": {"competitors": {"llm": {"final_equity": 995.0, "equity": [1000.0, 995.0]}}}}}
+    joined = merge(flies, llm)
+    assert "hourly_with_fees" in joined["passes"]
+    assert set(joined["cadence"]["lines"]) == {"real_every_bar", "real_hourly", "scrambled_every_bar",
+                                               "scrambled_hourly", "llm_hourly"}
+    assert joined["cadence"]["fee_bps"] == 5.0

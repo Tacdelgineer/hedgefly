@@ -30,6 +30,10 @@ from market.chart import WINDOW
 TOP_N = 10                  # champions per tribe (PLAN.md FINALE)
 TRIBES = ("real", "scrambled")
 PASSES = (("with_fees", None), ("no_fees", 0.0))    # None means "whatever --fee-bps says"
+HOURLY = 12                 # five-minute bars in an hour
+# The flies' extra pass: decisions once an hour, real fees, so they can be charted against the
+# language model, which is only ever asked hourly.
+HOURLY_PASS = "hourly_with_fees"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,10 +95,31 @@ def build_agents(calibration: np.ndarray, device: str, data_dir: str, scramble_s
     return {name: TribeAgent.build(w, calibration, device=device, eye=eye) for name, w in wiring.items()}
 
 
+def acting_every(decide, first: int, every: int):
+    """A decision function that is only acted on every `every` bars and holds in between.
+
+    The brain is still called on EVERY bar: it is a continuously running animal, and the
+    champions evolved with a running vote average measured in five-minute bars. Showing it one
+    chart an hour instead would put them in a world they never evolved in and confuse cadence
+    with a change of scenery. What changes is only how often they may act - which is exactly
+    the concession the language model gets."""
+    if every <= 1:
+        return decide
+    bar = {"t": first}
+
+    def hourly(chart, positions):
+        t = bar["t"]
+        bar["t"] += 1
+        actions = decide(chart, positions)                        # the brain sees this bar
+        return actions if (t - first) % every == 0 else np.zeros_like(actions)   # HOLD is 0
+    return hourly
+
+
 def trade_champions(agent: TribeAgent, champs: Champions, candles: pd.DataFrame, first: int, last: int,
-                    fee_bps: float, min_hold_bars: int) -> dict:
+                    fee_bps: float, min_hold_bars: int, every: int = 1) -> dict:
     wallet = Wallet(champs.genome.population, fee_bps=fee_bps, min_hold_bars=min_hold_bars)
-    result = trade_window(agent.start(champs.genome).decide, candles, first, last, wallet)
+    decide = acting_every(agent.start(champs.genome).decide, first, every)
+    result = trade_window(decide, candles, first, last, wallet)
     return {"ids": champs.ids,
             "final_equity": [round(float(e), EQUITY_PLACES) for e in result.final_equity],
             "trades": [int(t) for t in result.trades],
