@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fly Terminal — Natural Selection Capital</title>
+<style>
+  :root{
+    --void:#06080c; --panel:#0b0f16; --grid:#16202e;
+    --real:#2ff5c8; --scrambled:#ff3d7f; --hero:#ffd23f;
+    --up:#1f9e6e; --down:#b3335c; --ink:#c9d6e6; --dim:#5a6b80; --locked:#ff6a1f;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--void);color:var(--ink);
+    font-family:var(--mono);font-variant-numeric:tabular-nums}
+  #screen{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #ui{position:fixed;left:0;right:0;bottom:0;height:46px;display:flex;align-items:center;gap:14px;
+    padding:0 16px;background:linear-gradient(to top,rgba(6,8,12,.98),rgba(6,8,12,.72));
+    border-top:1px solid var(--grid);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    user-select:none}
+  #ui button{font:inherit;letter-spacing:.12em;text-transform:uppercase;color:var(--real);
+    background:transparent;border:1px solid var(--real);padding:5px 14px;cursor:pointer;
+    min-width:82px}
+  #ui button:hover{background:rgba(47,245,200,.12)}
+  #scrub{flex:1;-webkit-appearance:none;appearance:none;height:3px;background:var(--grid);outline:none}
+  #scrub::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:18px;background:var(--hero);
+    cursor:pointer;border:0}
+  #scrub::-moz-range-thumb{width:12px;height:18px;background:var(--hero);cursor:pointer;border:0}
+  #gen{color:var(--dim);min-width:150px}
+  #gen b{color:var(--ink);font-weight:400}
+  body.vertical #ui{height:52px}
+  #boot{position:fixed;inset:0;display:grid;place-items:center;color:var(--dim);font-size:13px;
+    letter-spacing:.14em;text-transform:uppercase}
+</style>
+</head><body>
+<canvas id="screen" aria-label="Fly Terminal: two tribes of fruit-fly brains trading Bitcoin"></canvas>
+<div id="boot">loading runs.json…</div>
+<div id="ui" hidden>
+  <button id="play">pause</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
+  <span id="gen"></span>
+</div>
+<script>
+'use strict';
+/* =====================================================================
+   FLY TERMINAL — visuals/style.md. Reads visuals/hq/data-contract.md,
+   the same runs.json the riso HQ replays. No dependencies.
+   ===================================================================== */
+const C = {
+  void:'#06080c', panel:'#0b0f16', grid:'#16202e',
+  real:'#2ff5c8', scrambled:'#ff3d7f', hero:'#ffd23f',
+  up:'#1f9e6e', down:'#b3335c', ink:'#c9d6e6', dim:'#5a6b80', locked:'#ff6a1f',
+};
+const TRIBE_COLOR = {real:C.real, scrambled:C.scrambled};
+const qs = new URLSearchParams(location.search);
+const VERTICAL = qs.has('vertical');
+const MS_PER_GEN = 1100;
+const CANDLES = 90;               // bars drawn per generation window
+const PILE_MAX = 1200;            // drawn dead flies; the count keeps rising past this
+const TRAIL = 40;
+
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d', {alpha:false});
+let W=1, H=1, dpr=1;
+let RUN=null, GEN=0, PLAYING=true, lastTick=0, t0=performance.now();
+
+/* ---------- seeded noise: the same generation always looks the same ---------- */
+const mulberry=a=>()=>{a=a+0x6D2B79F5|0;let x=Math.imul(a^a>>>15,1|a);x=x+Math.imul(x^x>>>7,61|x)^x;
+  return((x^x>>>14)>>>0)/4294967296};
+const seeded=n=>mulberry((n+1)*0x9E3779B9>>>0);
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,u)=>a+(b-a)*u;
+const money=v=>'$'+Math.round(v).toLocaleString('en-US');
+
+/* ---------- the frame we are showing ---------- */
+const frame=()=>RUN.frames[clamp(GEN,0,RUN.frames.length-1)];
+const heroOf=tribe=>frame().heroes[tribe];
+
+/* ---------- candles ----------------------------------------------------------
+   The contract (visuals/hq/data-contract.md) carries the window's start, end and net move,
+   deliberately not its 288 bars. If a future export adds `window.candles`, this draws the
+   real ones. Until then it reconstructs a shape from the generation's seed and rescales it so
+   the close-to-close move is exactly the logged price_move_pct - the SHAPE is invented, the
+   MOVE is the real number, and the pane says so on screen.                                  */
+const candleCache = new Map();
+function candlesFor(f){
+  if(f.window.candles) return {bars:f.window.candles, real:true};
+  if(candleCache.has(f.generation)) return candleCache.get(f.generation);
+  const R = seeded(f.generation), n = CANDLES, closes=[0];
+  for(let i=1;i<n;i++) closes.push(closes[i-1] + (R()*2-1) + (R()*2-1)*0.6);
+  const drift = closes[n-1];
+  const target = f.window.price_move_pct/100;
+  const bars=[];
+  for(let i=0;i<n;i++){
+    // straighten the walk, then tilt it so the net move is the logged one
+    const shaped = (closes[i] - drift*i/(n-1)) * 0.0022 + target*i/(n-1);
+    const prev = i ? bars[i-1].c : 1;
+    const c = 1 + shaped, o = i ? prev : 1 + target*0.02;
+    const wick = (0.0006 + R()*0.0016);
+    bars.push({o, c, h:Math.max(o,c)+wick, l:Math.min(o,c)-wick});
+  }
+  const out={bars, real:false};
+  candleCache.set(f.generation, out);
+  return out;
+}
+
+/* ---------- layout: one grid, two arrangements, never two implementations ---------- */
+function layout(){
+  const pad=12, ui=VERTICAL?52:46, h=H-ui;
+  if(VERTICAL){
+    const world={x:pad,y:pad+34,w:W-pad*2,h:h*0.50};
+    const pile={x:pad,y:world.y+world.h+8,w:W-pad*2,h:h*0.11};
+    const row=pile.y+pile.h+10, rest=h-row-pad;
+    const half=(W-pad*2-8)/2;
+    return {head:{x:pad,y:pad,w:W-pad*2,h:30}, world, pile,
+      score:{x:pad,y:row,w:W-pad*2,h:rest*0.44},
+      mesh:{x:pad,y:row+rest*0.44+8,w:half,h:rest*0.56-8},
+      locked:{x:pad+half+8,y:row+rest*0.44+8,w:half,h:rest*0.56-8}};
+  }
+  const side=Math.min(330,Math.max(250,W*0.24));
+  const left=W-side-pad*3, lx=pad;
+  const world={x:lx,y:pad+34,w:left,h:h-pad*2-34-86};
+  return {head:{x:lx,y:pad,w:left,h:30}, world,
+    pile:{x:lx,y:world.y+world.h+8,w:left,h:78},
+    score:{x:W-side-pad,y:pad,w:side,h:(h-pad*2)*0.46},
+    mesh:{x:W-side-pad,y:pad+(h-pad*2)*0.46+10,w:side,h:(h-pad*2)*0.32-10},
+    locked:{x:W-side-pad,y:pad+(h-pad*2)*0.78+10,w:side,h:(h-pad*2)*0.22-10}};
+}
+
+/* ---------- marks ---------- */
+function glowPath(color, blur, draw, {fill=true, width=1}={}){
+  ctx.save();
+  ctx.shadowColor=color; ctx.shadowBlur=blur;
+  ctx.fillStyle=color; ctx.strokeStyle=color; ctx.lineWidth=width;
+  ctx.beginPath(); draw(); fill?ctx.fill():ctx.stroke();
+  ctx.shadowBlur=0;                                  // the sharp pass over the soft one
+  ctx.beginPath(); draw(); fill?ctx.fill():ctx.stroke();
+  ctx.restore();
+}
+function label(s,x,y,{color=C.dim,size=11,align='left',spacing=1.6}={}){
+  ctx.save();
+  ctx.fillStyle=color;
+  ctx.font=`${size}px ui-monospace,Menlo,Consolas,monospace`;
+  ctx.letterSpacing=`${spacing}px`;                  // one tracked run, not hand-placed glyphs
+  ctx.textAlign=align==='right'?'right':align==='center'?'center':'left';
+  ctx.textBaseline='alphabetic';
+  const text=String(s).toUpperCase();
+  ctx.fillText(text,x,y);
+  const w=ctx.measureText(text).width;
+  ctx.restore(); return w;
+}
+function value(s,x,y,{color=C.ink,size=13,align='left'}={}){
+  ctx.save(); ctx.fillStyle=color; ctx.font=`${size}px ui-monospace,Menlo,monospace`;
+  ctx.textAlign=align; ctx.textBaseline='alphabetic'; ctx.fillText(String(s),x,y); ctx.restore();
+}
+function pane(r,title,{color=C.grid, titleColor=C.dim}={}){
+  ctx.fillStyle=C.panel; ctx.fillRect(r.x,r.y,r.w,r.h);
+  ctx.strokeStyle=color; ctx.lineWidth=1; ctx.strokeRect(r.x+.5,r.y+.5,r.w-1,r.h-1);
+  if(title) label(title, r.x+10, r.y+16, {color:titleColor});
+}
+
+/* ---------- the world: candles ---------- */
+let chartCanvas=null, chartKey='';
+function chartLayer(r,f){
+  const key=`${f.generation}|${Math.round(r.w)}x${Math.round(r.h)}`;
+  if(chartKey===key) return chartCanvas;
+  const cc=chartCanvas||document.createElement('canvas');
+  cc.width=Math.max(1,Math.round(r.w*dpr)); cc.height=Math.max(1,Math.round(r.h*dpr));
+  const g=cc.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,r.w,r.h);
+  const {bars}=candlesFor(f);
+  const lo=Math.min(...bars.map(b=>b.l)), hi=Math.max(...bars.map(b=>b.h));
+  const span=Math.max(hi-lo,1e-9), top=26, bot=r.h-18;
+  const y=v=>bot-(v-lo)/span*(bot-top);
+  const bw=r.w/bars.length;
+  g.strokeStyle=C.grid; g.lineWidth=1;
+  for(let k=0;k<=4;k++){const gy=Math.round(top+(bot-top)*k/4)+.5;
+    g.beginPath(); g.moveTo(0,gy); g.lineTo(r.w,gy); g.stroke();}
+  bars.forEach((b,i)=>{
+    const cx=i*bw+bw/2, up=b.c>=b.o, col=up?C.up:C.down;
+    g.strokeStyle=col; g.fillStyle=col; g.lineWidth=1;
+    g.beginPath(); g.moveTo(Math.round(cx)+.5,y(b.h)); g.lineTo(Math.round(cx)+.5,y(b.l)); g.stroke();
+    const yo=y(b.o), yc=y(b.c), h=Math.max(1,Math.abs(yc-yo));
+    g.fillRect(Math.round(cx-bw*0.3), Math.round(Math.min(yo,yc)), Math.max(1,Math.round(bw*0.6)), h);
+  });
+  chartCanvas=cc; chartKey=key; return cc;
+}
+
+/* ---------- the world: 200 flies ----------------------------------------------
+   A fly's height is how it is doing: the top of the pane is the best equity in either tribe
+   this generation, the bottom is the broke line. Alive flies drift; a broke fly falls.      */
+function flyState(f, tribe, i, time){
+  const fly=f.tribes[tribe].flies[i];
+  const R=seeded(f.generation*977 + (tribe==='real'?0:5000) + i);
+  const a=R(), b=R(), c=R();
+  return {fly, phase:a*6.283, driftX:b, driftY:c, wing:a*97};
+}
+function flyBand(f){
+  /* The pane's height is the spread of the flies that are still flying this generation, so a
+     swarm that is all within a percent of each other still fills the sky. The $1,000 line is
+     drawn where it falls, and above it means winning. */
+  const alive=[];
+  for(const tribe of RUN.tribes)
+    for(const fly of f.tribes[tribe].flies) if(!fly.broke) alive.push(fly.equity);
+  if(!alive.length) return {lo:RUN.start_cash*.98, hi:RUN.start_cash*1.02};
+  // Percentiles, not min and max: one fly clinging on at $505 would otherwise squash the whole
+  // swarm into the top of the pane. Flies outside the band are clamped to its edges.
+  alive.sort((a,b)=>a-b);
+  const q=u=>alive[clamp(Math.round(u*(alive.length-1)),0,alive.length-1)];
+  let lo=q(0.12), hi=q(0.88);
+  if(hi-lo<RUN.start_cash*0.004){ const mid=(hi+lo)/2, half=RUN.start_cash*0.002; lo=mid-half; hi=mid+half; }
+  const pad=(hi-lo)*0.45;
+  return {lo:Math.min(lo-pad,RUN.start_cash), hi:Math.max(hi+pad,RUN.start_cash)};
+}
+function drawFlies(r,f,time){
+  const {lo,hi}=flyBand(f);
+  const top=r.y+22, bot=r.y+r.h-26;
+  const yOf=e=>bot-clamp((e-lo)/Math.max(hi-lo,1e-9),0,1)*(bot-top);
+  ctx.save();                                        // the break-even line the swarm sorts around
+  ctx.setLineDash([2,5]); ctx.strokeStyle=C.ink; ctx.globalAlpha=.28; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(r.x,yOf(RUN.start_cash)); ctx.lineTo(r.x+r.w,yOf(RUN.start_cash)); ctx.stroke();
+  ctx.restore();
+  label(money(RUN.start_cash)+' break even', r.x+10, yOf(RUN.start_cash)-5, {color:C.dim,size:9});
+  const wings=[];
+  for(const tribe of RUN.tribes){
+    const rows=f.tribes[tribe].flies, col=TRIBE_COLOR[tribe];
+    const lane=tribe==='real'?0:1;
+    const bodies=[];
+    for(let i=0;i<rows.length;i++){
+      if(rows[i].broke) continue;                       // the dead are in the pile, not the sky
+      const s=flyState(f,tribe,i,time);
+      const wander=Math.sin(time*0.7+s.phase)*9 + Math.sin(time*0.23+s.phase*1.7)*16;
+      const x=r.x+14+((i+s.driftX*0.8)/rows.length)*(r.w-28) + wander*0.5;
+      const y=yOf(rows[i].equity) + Math.sin(time*1.9+s.phase)*5 + (lane?3:-3);
+      bodies.push([x,y,s]);
+    }
+    glowPath(col, 9, ()=>{
+      for(const [x,y] of bodies){ ctx.moveTo(x+2.1,y); ctx.arc(x,y,2.1,0,6.283); }
+    });
+    ctx.save(); ctx.globalAlpha=.55; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath();
+    for(const [x,y,s] of bodies){                        // wings, redrawn every frame
+      const beat=Math.sin(time*26+s.wing)*2.6;
+      ctx.moveTo(x-1,y-1); ctx.lineTo(x-5,y-3.4-beat);
+      ctx.moveTo(x+1,y-1); ctx.lineTo(x+5,y-3.4+beat);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+  return {yOf, top, bot};
+}
+
+/* ---------- the pile: every fly the run has killed, and it only ever grows ---------- */
+let pile=[], pileThrough=-1;
+function rebuildPile(upto){
+  pile=[];
+  for(let g=0; g<=upto && g<RUN.frames.length; g++){
+    const f=RUN.frames[g];
+    for(const tribe of RUN.tribes){
+      f.tribes[tribe].flies.forEach((fly,i)=>{
+        if(!fly.broke) return;
+        const R=seeded(g*7919 + (tribe==='real'?1:2)*131 + i);
+        pile.push({tribe, u:R(), v:R(), born:g});
+      });
+    }
+  }
+  pileThrough=upto;
+}
+function drawPile(r){
+  pane(r,null);
+  const total=pile.length;
+  const shown=pile.slice(-PILE_MAX);
+  const cols=Math.max(8,Math.floor((r.w-14)/5)), height=Math.max(1,Math.floor((r.h-26)/4.5));
+  const stack=new Int32Array(cols);
+  const heap={real:[], scrambled:[]};
+  for(const p of shown){
+    const c=Math.min(cols-1,Math.floor(p.u*cols));
+    const level=stack[c]++;
+    heap[p.tribe].push([r.x+7+c*5+2.5, r.y+r.h-6-(level%height)*4.5 - p.v*1.4]);
+  }
+  for(const tribe of RUN.tribes){
+    ctx.save(); ctx.globalAlpha=.62; ctx.fillStyle=TRIBE_COLOR[tribe]; ctx.beginPath();
+    for(const [x,y] of heap[tribe]){ ctx.moveTo(x+1.7,y); ctx.arc(x,y,1.7,0,6.283); }
+    ctx.fill(); ctx.restore();
+  }
+  label('the pile',r.x+10,r.y+15,{color:C.dim});
+  label(`${total} dead`,r.x+r.w-10,r.y+15,{color:total?C.locked:C.dim,align:'right'});
+}
+
+/* ---------- the hero: trail, tag, equity line, family tree ---------- */
+let trail=[];
+function drawHero(r,f,time,scale){
+  const hero=heroOf('real');
+  const rows=f.tribes.real.flies;
+  let best=0; for(let i=1;i<rows.length;i++) if(rows[i].equity>rows[best].equity) best=i;
+  const s=flyState(f,'real',best,time);
+  const wander=Math.sin(time*0.7+s.phase)*9 + Math.sin(time*0.23+s.phase*1.7)*16;
+  const x=r.x+14+((best+s.driftX*0.8)/rows.length)*(r.w-28)+wander*0.5;
+  const y=scale.yOf(hero.equity)+Math.sin(time*1.9+s.phase)*5;
+
+  trail.push([x,y]); if(trail.length>TRAIL) trail.shift();
+  ctx.save();
+  for(let k=1;k<trail.length;k++){
+    ctx.globalAlpha=(k/trail.length)*0.5; ctx.strokeStyle=C.hero; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(trail[k-1][0],trail[k-1][1]); ctx.lineTo(trail[k][0],trail[k][1]); ctx.stroke();
+  }
+  ctx.restore();
+  glowPath(C.hero, 16, ()=>{ ctx.moveTo(x+3.4,y); ctx.arc(x,y,3.4,0,6.283); });
+  ctx.save(); ctx.strokeStyle=C.hero; ctx.lineWidth=1.2; ctx.globalAlpha=.85; ctx.beginPath();
+  const beat=Math.sin(time*26+s.wing)*3.4;
+  ctx.moveTo(x-1.5,y-1.5); ctx.lineTo(x-8,y-5-beat);
+  ctx.moveTo(x+1.5,y-1.5); ctx.lineTo(x+8,y-5+beat);
+  ctx.stroke(); ctx.restore();
+
+  const tag=hero.id.toUpperCase(), tw=tag.length*8+16;
+  const tx=clamp(x+12, r.x+4, r.x+r.w-tw-4), ty=clamp(y-26, r.y+26, r.y+r.h-40);
+  ctx.save(); ctx.globalAlpha=.9; ctx.fillStyle=C.void; ctx.fillRect(tx,ty,tw,18);
+  ctx.strokeStyle=C.hero; ctx.lineWidth=1; ctx.strokeRect(tx+.5,ty+.5,tw-1,17); ctx.restore();
+  label(tag, tx+8, ty+13, {color:C.hero, size:10});
+  ctx.strokeStyle=C.hero; ctx.globalAlpha=.5; ctx.beginPath();
+  ctx.moveTo(x,y); ctx.lineTo(tx<x?tx+tw:tx, ty+18); ctx.stroke(); ctx.globalAlpha=1;
+
+  // the hero lineage's equity, generation by generation, across the whole pane
+  const series=RUN.frames.map(q=>q.heroes.real.equity);
+  const lo=Math.min(...series, RUN.start_cash), hi=Math.max(...series, RUN.start_cash);
+  const band=Math.min(96, r.h*0.2), base=r.y+r.h-34;
+  const gy=v=>base-((v-lo)/Math.max(hi-lo,1e-9))*band;
+  ctx.save(); ctx.globalAlpha=.55; ctx.strokeStyle=C.hero; ctx.lineWidth=1.1;
+  ctx.beginPath();
+  for(let g=0; g<=GEN; g++){
+    const px=r.x+ (RUN.generations<2?0:(g/(RUN.generations-1))*r.w);
+    g?ctx.lineTo(px,gy(series[g])):ctx.moveTo(px,gy(series[g]));
+  }
+  ctx.stroke();
+  const px=r.x+(RUN.generations<2?0:(GEN/(RUN.generations-1))*r.w);
+  ctx.globalAlpha=1; ctx.fillStyle=C.hero;
+  ctx.beginPath(); ctx.arc(px,gy(series[GEN]),2,0,6.283); ctx.fill();
+  ctx.restore();
+  label('hero equity by generation', r.x+r.w-14, base+12, {color:C.dim, size:9, align:'right'});
+
+  // the family tree: the chain that ends in this fly
+  const chain=[...hero.ancestors, hero.id].slice(-5);
+  let fx=r.x+12, fy=r.y+r.h-10;
+  label('lineage', fx, fy-16, {color:C.dim, size:9});
+  chain.forEach((id,k)=>{
+    const last=k===chain.length-1, short=id.replace(/^(real|scrambled)-/,'').toUpperCase();
+    const w=label(short, fx, fy, {color:last?C.hero:C.dim, size:9});
+    fx+=w+4;
+    if(!last){ ctx.strokeStyle=C.dim; ctx.globalAlpha=.7; ctx.beginPath();
+      ctx.moveTo(fx-2,fy-3); ctx.lineTo(fx+5,fy-3); ctx.stroke(); ctx.globalAlpha=1; fx+=9; }
+  });
+}
+
+/* ---------- panels ---------- */
+function drawScore(r,f){
+  pane(r,'scoreboard');
+  const rows=[];
+  for(const tribe of RUN.tribes){
+    const d=f.tribes[tribe];
+    rows.push({name:tribe, best:d.equity.best, median:d.equity.median, dead:d.broke,
+               trades:d.trades.median, color:TRIBE_COLOR[tribe], tribe:true});
+  }
+  for(const name of RUN.competitors)
+    if(f.competitors[name]!=null) rows.push({name:name.replace(/_/g,' '), best:f.competitors[name], color:C.dim});
+  const all=rows.map(q=>q.best).concat(RUN.start_cash);
+  const lo=Math.min(...all), hi=Math.max(...all);
+  let y=r.y+38;
+  const step=Math.min(56, (r.h-48)/rows.length);
+  for(const row of rows){
+    label(row.name, r.x+10, y, {color:row.color, size:11});
+    value(money(row.best), r.x+r.w-10, y, {color:row.color, size:18, align:'right'});
+    const bx=r.x+10, bw=r.w-20, u=clamp((row.best-lo)/Math.max(hi-lo,1e-9),0,1);
+    ctx.fillStyle=C.grid; ctx.fillRect(bx,y+7,bw,3);
+    ctx.fillStyle=row.color; ctx.fillRect(bx,y+7,Math.max(2,bw*u),3);
+    const base=clamp((RUN.start_cash-lo)/Math.max(hi-lo,1e-9),0,1);
+    ctx.fillStyle=C.ink; ctx.globalAlpha=.5; ctx.fillRect(bx+bw*base,y+5,1,7); ctx.globalAlpha=1;
+    if(row.tribe) label(`median ${money(row.median)}   dead ${row.dead}   trades ${row.trades}`,
+                        r.x+10, y+24, {color:C.dim, size:9});
+    y+=step;
+  }
+}
+
+function drawMesh(r,f,time){
+  pane(r,'brain activity');
+  const heat=clamp(f.tribes.real.trades.median/45,0,1);
+  const R=seeded(7), n=22, pts=[];
+  for(let i=0;i<n;i++) pts.push([r.x+14+R()*(r.w-28), r.y+30+R()*(r.h-46)]);
+  ctx.save(); ctx.strokeStyle=C.real; ctx.globalAlpha=.22; ctx.lineWidth=1; ctx.beginPath();
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+    const d=Math.hypot(pts[i][0]-pts[j][0], pts[i][1]-pts[j][1]);
+    if(d<r.w*0.28){ ctx.moveTo(...pts[i]); ctx.lineTo(...pts[j]); }
+  }
+  ctx.stroke(); ctx.restore();
+  const wave=(time*(0.35+heat*1.1))%1;
+  glowPath(C.real, 10, ()=>{
+    pts.forEach((p,i)=>{
+      const u=((i*13)%n)/n, d=(wave-u+1)%1, on=d<0.18;
+      const rad=on?2.6:1.3;
+      ctx.moveTo(p[0]+rad,p[1]); ctx.arc(p[0],p[1],rad,0,6.283);
+    });
+  });
+  label(`median trades ${f.tribes.real.trades.median}`, r.x+10, r.y+r.h-10, {color:C.dim, size:9});
+}
+
+function drawLocked(r,time){
+  pane(r,'locked', {color:C.locked, titleColor:C.locked});
+  ctx.save(); ctx.beginPath(); ctx.rect(r.x+1,r.y+24,r.w-2,r.h-25); ctx.clip();
+  ctx.strokeStyle=C.locked; ctx.globalAlpha=.16; ctx.lineWidth=7;
+  for(let x=-r.h; x<r.w; x+=18){ ctx.beginPath(); ctx.moveTo(r.x+x,r.y+r.h); ctx.lineTo(r.x+x+r.h,r.y+24); ctx.stroke(); }
+  ctx.restore();
+  const pulse=0.55+0.45*Math.sin(time*1.4);
+  ctx.save(); ctx.globalAlpha=pulse;
+  label('last 6 months', r.x+10, r.y+r.h-30, {color:C.locked, size:11});
+  ctx.restore();
+  label('52,915 bars  ·  sealed', r.x+10, r.y+r.h-14, {color:C.dim, size:9});
+}
+
+function drawHead(r,f){
+  const move=f.window.price_move_pct;
+  value(`GEN ${String(f.generation).padStart(2,'0')}`, r.x, r.y+26, {color:C.ink, size:34});
+  const gw=130;
+  label(`of ${RUN.generations-1}`, r.x+gw, r.y+24, {color:C.dim, size:11});
+  label(f.window.first_time.slice(0,16).replace('T',' '), r.x+gw+70, r.y+14, {color:C.dim, size:10});
+  label(`${move>=0?'+':''}${move.toFixed(2)}% this window`, r.x+gw+70, r.y+27,
+        {color:move>=0?C.real:C.scrambled, size:10});
+  const {real}=candlesFor(f);
+  label(real?'btc-usd 5m':'btc-usd 5m · shape reconstructed, move from the log',
+        r.x+r.w, r.y+27, {color:C.dim, size:9, align:'right'});
+}
+
+/* ---------- scanlines and the sweep, once, over the finished frame ---------- */
+let scan=null;
+function overlay(time){
+  if(!scan){
+    const s=document.createElement('canvas'); s.width=1; s.height=4;
+    const g=s.getContext('2d'); g.fillStyle='rgba(0,0,0,0.42)'; g.fillRect(0,0,1,2);
+    scan=ctx.createPattern(s,'repeat');
+  }
+  ctx.save(); ctx.globalAlpha=.16; ctx.fillStyle=scan; ctx.fillRect(0,0,W,H); ctx.restore();
+  const y=((time%9)/9)*(H+260)-130;
+  const g=ctx.createLinearGradient(0,y-130,0,y+130);
+  g.addColorStop(0,'rgba(47,245,200,0)'); g.addColorStop(.5,'rgba(47,245,200,0.045)');
+  g.addColorStop(1,'rgba(47,245,200,0)');
+  ctx.save(); ctx.fillStyle=g; ctx.fillRect(0,y-130,W,260); ctx.restore();
+}
+
+/* ---------- the frame ---------- */
+function resize(){
+  W=innerWidth; H=innerHeight; dpr=Math.min(2, devicePixelRatio||1);
+  cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  chartKey='';
+}
+function render(time){
+  const f=frame(), L=layout();
+  ctx.fillStyle=C.void; ctx.fillRect(0,0,W,H);
+  drawHead(L.head,f);
+
+  pane(L.world,null);
+  const chart=chartLayer(L.world,f);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(L.world.x,L.world.y,L.world.w,L.world.h); ctx.clip();
+  ctx.globalAlpha=.82;
+  ctx.drawImage(chart, L.world.x, L.world.y, L.world.w, L.world.h);
+  ctx.globalAlpha=1;
+  const scale=drawFlies(L.world,f,time);
+  drawHero(L.world,f,time,scale);
+  ctx.restore();
+  ctx.strokeStyle=C.grid; ctx.strokeRect(L.world.x+.5,L.world.y+.5,L.world.w-1,L.world.h-1);
+
+  if(pileThrough!==GEN) rebuildPile(GEN);
+  drawPile(L.pile);
+  drawScore(L.score,f);
+  drawMesh(L.mesh,f,time);
+  drawLocked(L.locked,time);
+  overlay(time);
+}
+
+function paintUI(){
+  const f=frame();
+  document.getElementById('scrub').value=GEN;
+  document.getElementById('gen').innerHTML=
+    `<b>${money(f.tribes.real.equity.best)}</b> real · <b>${money(f.tribes.scrambled.equity.best)}</b> scrambled`;
+  document.getElementById('play').textContent=PLAYING?'pause':'play';
+}
+function setGeneration(g){
+  GEN=clamp(Math.round(g),0,RUN.generations-1);
+  if(pileThrough>GEN) rebuildPile(GEN);
+  paintUI();
+}
+
+let frozen=qs.has('frame')?+qs.get('frame')/30:null;
+function loop(now){
+  requestAnimationFrame(loop);
+  if(innerWidth!==W||innerHeight!==H) resize();
+  if(PLAYING && now-lastTick>=MS_PER_GEN){
+    lastTick=now;
+    setGeneration(GEN+1>=RUN.generations?0:GEN+1);
+  }
+  render(frozen!=null?frozen:(now-t0)/1000);
+}
+
+async function boot(){
+  resize();
+  try{
+    const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+    if(!r.ok) throw new Error('runs.json: '+r.status);
+    RUN=await r.json();
+  }catch(e){
+    document.getElementById('boot').textContent='no runs.json — serve over http; see visuals/hq/data-contract.md';
+    console.error(e); return;
+  }
+  RUN.tribes=RUN.tribes||['real','scrambled'];
+  RUN.competitors=RUN.competitors||['momentum','random','buy_and_hold'];
+  document.getElementById('boot').remove();
+  document.getElementById('ui').hidden=false;
+  if(VERTICAL) document.body.classList.add('vertical');
+  const scrub=document.getElementById('scrub');
+  scrub.max=RUN.generations-1;
+  scrub.oninput=e=>{PLAYING=false; setGeneration(+e.target.value); paintUI()};
+  document.getElementById('play').onclick=()=>{PLAYING=!PLAYING; lastTick=performance.now(); paintUI()};
+  addEventListener('keydown',e=>{
+    if(e.key===' '){PLAYING=!PLAYING; lastTick=performance.now(); paintUI(); e.preventDefault()}
+    else if(e.key==='['){PLAYING=false; setGeneration(GEN-1)}
+    else if(e.key===']'){PLAYING=false; setGeneration(GEN+1)}
+  });
+  GEN=clamp(+(qs.get('gen')||0),0,RUN.generations-1);
+  PLAYING=qs.get('play')!=='0';
+  rebuildPile(GEN); paintUI();
+  lastTick=performance.now();
+  requestAnimationFrame(loop);
+}
+boot();
+</script>
+</body></html>
