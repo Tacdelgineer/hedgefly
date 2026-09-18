@@ -351,3 +351,18 @@ function text(pen,str,at,size,o={}){
 const textWidth=(str,size,gap=.38)=>String(str).length*size*.62*(1+gap);
 function textCentred(pen,str,at,size,o={}){return text(pen,str,[at[0]-textWidth(str,size,o.gap)/2,at[1]],size,o)}
 const money=v=>'$'+Math.round(v).toLocaleString('en-US');
+
+/* =====================================================================
+   HEADLINES — chosen by rules from a generation's numbers; they carry none of their own.
+   Shared by the poster cards and the Archive room so the two always agree.
+   ===================================================================== */
+function headlineFor(run,g){
+  const f=run.frames[g],prev=g?run.frames[g-1]:null,r=f.tribes.real,s=f.tribes.scrambled,h=f.heroes.real;
+  if(g===0)return 'The swarm wakes up';
+  if(h.origin==='newcomer')return 'A stranger takes the crown';
+  if(h.generations_lived>=4)return 'The old guard holds';
+  if(prev&&r.trades.median_per_day<prev.tribes.real.trades.median_per_day*.7)return 'The flies learn to sit still';
+  if(r.equity.median>s.equity.median&&r.equity.best>s.equity.best)return 'The real brains pull ahead';
+  if(s.equity.median>r.equity.median&&s.equity.best>r.equity.best)return 'The shuffled brains strike back';
+  return 'Neck and neck';
+}

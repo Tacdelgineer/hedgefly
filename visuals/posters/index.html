@@ -25,17 +25,7 @@
 const qs=new URLSearchParams(location.search);
 const cv=document.getElementById('card'),ctx=cv.getContext('2d',{alpha:false});
 
-function headlineFor(run,g){
-  const f=run.frames[g],prev=g?run.frames[g-1]:null,r=f.tribes.real,s=f.tribes.scrambled,h=f.heroes.real;
-  if(qs.get('headline'))return qs.get('headline');
-  if(g===0)return 'The swarm wakes up';
-  if(h.origin==='newcomer')return 'A stranger takes the crown';
-  if(h.generations_lived>=4)return 'The old guard holds';
-  if(prev&&r.trades.median_per_day<prev.tribes.real.trades.median_per_day*.7)return 'The flies learn to sit still';
-  if(r.equity.median>s.equity.median&&r.equity.best>s.equity.best)return 'The real brains pull ahead';
-  if(s.equity.median>r.equity.median&&s.equity.best>r.equity.best)return 'The shuffled brains strike back';
-  return 'Neck and neck';
-}
+const posterHeadline=(run,g)=>qs.get('headline')||headlineFor(run,g);   // a narrator headline may override the rule
 function stats(run,g){
   const f=run.frames[g],h=f.heroes.real;
   return [{label:'real tribe, median fly',value:money(f.tribes.real.equity.median),ink:'cyan'},
@@ -78,8 +68,8 @@ function drawCard(run,g){
 
   // the headline: huge, set in the stencil, as many lines as it needs
   const hBox=tall?{x:m,y:m*2.4,w:W-2*m,h:H*.30}:{x:m,y:H*.17,w:W*.47-m,h:H*.56};
-  let size=Math.min(hBox.w/5.5,hBox.h/2.4),lines=wrap(headlineFor(run,g),size,hBox.w);
-  while(lines.length*size*1.22>hBox.h&&size>20){size*=.92;lines=wrap(headlineFor(run,g),size,hBox.w)}
+  let size=Math.min(hBox.w/5.5,hBox.h/2.4),lines=wrap(posterHeadline(run,g),size,hBox.w);
+  while(lines.length*size*1.22>hBox.h&&size>20){size*=.92;lines=wrap(posterHeadline(run,g),size,hBox.w)}
   lines.forEach((line,k)=>text(pen,line,[hBox.x,hBox.y+k*size*1.22],size,{w:Math.max(2,size/13),gap:.3,amp:.6,tone:1}));
 
   // three stats from the logs
@@ -97,7 +87,7 @@ function drawCard(run,g){
   const src=(run.fake?'FAKE DATA · ':'')+'FROM THE LOGS OF RUN '+run.run_id+' · 4 FIXED DAYS · $1,000 A DAY';
   text(pen,src,[m,H-m],Math.max(8,W*.009),{tone:.5,w:.9});
   ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation='source-over';
-  document.title=`Hedgefly · generation ${f.generation} · ${headlineFor(run,g)}`;
+  document.title=`Hedgefly · generation ${f.generation} · ${posterHeadline(run,g)}`;
   document.body.dataset.ready='1';
 }
 
