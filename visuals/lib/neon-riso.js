@@ -277,8 +277,10 @@ function installFlies(pen){
       else pen.line([[X(lx),Y(-12)],[X(lx+dx),Y(-8)],[X(lx+dx*1.2),Y(0)]],'ghost',.9*s,{tone:.7});
     }
     const beat=o.dead?0:Math.sin(t*30+(o.phase||0)*7);                              // wings flicker every frame
-    pen.shape(pen.leaf([X(-1),Y(-21)],[X(-16),Y(-35-beat*5)],5.5*s),[ink,.2],{line:'ghost',w:.7,lineTone:.5});
-    pen.shape(pen.leaf([X(0),Y(-22)],[X(-7),Y(-41+beat*5)],4.8*s),[ink,.18],{line:'ghost',w:.7,lineTone:.45});
+    // wings are light, not card: tinted without knocking out what is behind them
+    for(const [root,tip,wid,tone] of [[[X(-1),Y(-21)],[X(-16),Y(-35-beat*5)],5.5*s,.22],[[X(0),Y(-22)],[X(-7),Y(-41+beat*5)],4.8*s,.18]]){
+      const L=pen.leaf(root,tip,wid);pen.tint(L,ink,tone);pen.line(L,'ghost',.7,{closed:true,tone:.45});
+    }
     pen.shape(ellipse2(X(-5),Y(-13),7.5*s,5.5*s,.35*f),[ink,tone*.75],{line:ink,w:1*s,lineTone:.9});   // abdomen
     for(const k of[-2,1.5])pen.line([[X(-6+k),Y(-18)],[X(-4+k),Y(-8)]],'paper',1*s,{tone:1,amp:.2});
     pen.shape(pen.circle(X(1),Y(-19),5*s,14),[ink,tone],{line:ink,w:1*s,lineTone:.95});    // thorax
