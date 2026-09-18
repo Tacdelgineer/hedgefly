@@ -102,9 +102,10 @@ Deadline: published within 7 days.
     with a running average of that fly's own recent votes. A fly whose readout sits high all
     window does not buy all window; a fly reacts when the chart moves it.
   - Both rules are identical for the real and the scrambled tribe.
-- **Portfolio:** long or flat only. Starts at $1,000 (paper). Fitness is a log ratio and every
-  competitor starts at the same figure, so the bankroll is a scale factor and nothing else.
-  A fly that drops below $500 is "broke" and dies for that generation.
+- **Portfolio:** long or flat only. Starts at $1,000 (paper) on each fixed day. Fitness is a log
+  ratio and every competitor starts at the same figure, so the bankroll is a scale factor and
+  nothing else. There is no bankruptcy: a long-or-flat wallet cannot go below zero, and a fly
+  that loses money is punished by its fitness, not by a $500 line.
 - **Brain steps per candle:** configurable, 4. The chart needs 3 to 4 synapses to reach
   the readout neurons, so fewer steps decide on a chart one or more candles old.
 
@@ -125,6 +126,10 @@ Deadline: published within 7 days.
 - Fitness = mean over the four days of log(final equity / 1000).
 - Top 20% survive unchanged (elitism: the best genomes found so far are always in the
   population). Children = parent genome + Gaussian noise. 10% random newcomers.
+- **Death is elimination.** A fly dies when it fails to reproduce: every generation the bottom
+  80% of each tribe are eliminated. The logs mark each fly `survived` or `eliminated` from the
+  same ranking breeding uses, and the visuals' pile is those flies, generation after
+  generation. (Equity is still logged per fly and per day, unchanged.)
 - Competitors - Momentum, Random, Buy-and-hold - trade the same four days under the same
   fees, minimum hold and rule-4 ordering, scored the same way. The days never change, so they
   run once per run and are logged with every generation.
@@ -172,7 +177,7 @@ room to room like chapters of the story. Rooms are driven by exported log data.
 |------|---------------|-----------|
 | The Lab | DGX Spark on a desk, cables, a jar of fruit flies | static |
 | The Brain Room | a connectome sculpture that pulses | activity summary per generation |
-| The Trading Floor | rows of tiny desks, one per fly; two wings: Real / Scrambled; desks go dark when a fly goes broke | equity + deaths |
+| The Trading Floor | rows of tiny desks, one per fly; two wings: Real / Scrambled; desks go dark when a fly is eliminated | equity + eliminations |
 | The Hero's Desk | one lineage: its equity curve and its family tree back to a founder | hero lineage |
 | The Archive | bookcases of generation logs; one spine per generation | generation count |
 | The Print Shop | a riso printer printing that generation's poster | narrator poster |

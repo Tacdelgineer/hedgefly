@@ -55,7 +55,7 @@ const TRIBE_COLOR = {real:C.real, scrambled:C.scrambled};
 const qs = new URLSearchParams(location.search);
 const VERTICAL = qs.has('vertical');
 const MS_PER_GEN = 1100;
-const PILE_MAX = 1200;            // drawn dead flies; the count keeps rising past this
+const PILE_MAX = 4000;            // drawn eliminated flies; the count keeps rising past this
 const TRAIL = 40;
 
 const cv = document.getElementById('screen');
@@ -79,10 +79,11 @@ const heroOf=tribe=>frame().heroes[tribe];
    The real bars the generation traded, as [open, high, low, close], from the exporter
    (visuals/hq/data-contract.md). No candles in the file means no candles on screen: this
    never invents a shape.                                                                  */
-function candlesFor(f){
-  const raw=f.window.candles;
+function candlesFor(day){
+  const raw=day&&day.candles;
   return raw&&raw.length ? raw.map(([o,h,l,c])=>({o,h,l,c})) : null;
 }
+const days=()=>RUN.windows||[];
 
 /* ---------- layout: one grid, two arrangements, never two implementations ---------- */
 function layout(){
@@ -141,35 +142,53 @@ function pane(r,title,{color=C.grid, titleColor=C.dim}={}){
 
 /* ---------- the world: candles ---------- */
 let chartCanvas=null, chartKey='';
-function chartLayer(r,f){
-  const key=`${f.generation}|${Math.round(r.w)}x${Math.round(r.h)}`;
+/* The four fixed days, side by side. Each day is scaled to its own high and low, the way the
+   flies see a chart, because four days at different prices on one axis would flatten all four.
+   The days never change, so this is drawn once per size, not once per generation.            */
+function chartLayer(r){
+  const key=`${Math.round(r.w)}x${Math.round(r.h)}`;
   if(chartKey===key) return chartCanvas;
   const cc=chartCanvas||document.createElement('canvas');
   cc.width=Math.max(1,Math.round(r.w*dpr)); cc.height=Math.max(1,Math.round(r.h*dpr));
   const g=cc.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
   g.clearRect(0,0,r.w,r.h);
-  const bars=candlesFor(f);
-  if(!bars){ chartCanvas=cc; chartKey=key; return cc; }      // nothing to draw, nothing drawn
-  const lo=Math.min(...bars.map(b=>b.l)), hi=Math.max(...bars.map(b=>b.h));
-  const span=Math.max(hi-lo,1e-9), top=26, bot=r.h-18;
-  const y=v=>bot-(v-lo)/span*(bot-top);
-  const bw=r.w/bars.length;
+  const all=days(), gap=10, dw=(r.w-gap*(all.length-1))/Math.max(1,all.length);
+  const top=40, bot=r.h-18;
   g.strokeStyle=C.grid; g.lineWidth=1;
   for(let k=0;k<=4;k++){const gy=Math.round(top+(bot-top)*k/4)+.5;
     g.beginPath(); g.moveTo(0,gy); g.lineTo(r.w,gy); g.stroke();}
-  bars.forEach((b,i)=>{
-    const cx=i*bw+bw/2, up=b.c>=b.o, col=up?C.up:C.down;
-    g.strokeStyle=col; g.fillStyle=col; g.lineWidth=1;
-    g.beginPath(); g.moveTo(Math.round(cx)+.5,y(b.h)); g.lineTo(Math.round(cx)+.5,y(b.l)); g.stroke();
-    const yo=y(b.o), yc=y(b.c), h=Math.max(1,Math.abs(yc-yo));
-    g.fillRect(Math.round(cx-bw*0.3), Math.round(Math.min(yo,yc)), Math.max(1,Math.round(bw*0.6)), h);
+  all.forEach((day,d)=>{
+    const x0=d*(dw+gap), bars=candlesFor(day);
+    if(d){ g.strokeStyle=C.dim; g.globalAlpha=.35; g.setLineDash([2,4]);
+      g.beginPath(); g.moveTo(Math.round(x0-gap/2)+.5,8); g.lineTo(Math.round(x0-gap/2)+.5,r.h-8); g.stroke();
+      g.setLineDash([]); g.globalAlpha=1; }
+    if(!bars) return;                                   // nothing in the file, nothing drawn
+    const lo=Math.min(...bars.map(b=>b.l)), hi=Math.max(...bars.map(b=>b.h));
+    const span=Math.max(hi-lo,1e-9), y=v=>bot-(v-lo)/span*(bot-top), bw=dw/bars.length;
+    bars.forEach((b,i)=>{
+      const cx=x0+i*bw+bw/2, col=b.c>=b.o?C.up:C.down;
+      g.strokeStyle=col; g.fillStyle=col; g.lineWidth=1;
+      g.beginPath(); g.moveTo(Math.round(cx)+.5,y(b.h)); g.lineTo(Math.round(cx)+.5,y(b.l)); g.stroke();
+      const yo=y(b.o), yc=y(b.c);
+      g.fillRect(Math.round(cx-bw*0.32), Math.round(Math.min(yo,yc)), Math.max(1,Math.round(bw*0.64)),
+                 Math.max(1,Math.abs(yc-yo)));
+    });
   });
   chartCanvas=cc; chartKey=key; return cc;
+}
+function dayLabels(r){
+  const all=days(), gap=10, dw=(r.w-gap*(all.length-1))/Math.max(1,all.length);
+  all.forEach((day,d)=>{
+    const x=r.x+d*(dw+gap)+8, m=day.price_move_pct;
+    label(`day ${d+1} · ${day.first_time.slice(0,10)}`, x, r.y+16, {color:C.dim, size:9});
+    label(`${m>=0?'+':''}${m.toFixed(2)}%`, x, r.y+29, {color:m>=0?C.real:C.scrambled, size:9});
+  });
 }
 
 /* ---------- the world: 200 flies ----------------------------------------------
    A fly's height is how it is doing: the top of the pane is the best equity in either tribe
-   this generation, the bottom is the broke line. Alive flies drift; a broke fly falls.      */
+   this generation. The fittest fifth fly bright; the eliminated fly dim, because they are
+   about to drop into the pile.                                                               */
 function flyState(f, tribe, i, time){
   const fly=f.tribes[tribe].flies[i];
   const R=seeded(f.generation*977 + (tribe==='real'?0:5000) + i);
@@ -182,7 +201,7 @@ function flyBand(f){
      drawn where it falls, and above it means winning. */
   const alive=[];
   for(const tribe of RUN.tribes)
-    for(const fly of f.tribes[tribe].flies) if(!fly.broke) alive.push(fly.equity);
+    for(const fly of f.tribes[tribe].flies) alive.push(fly.equity);
   if(!alive.length) return {lo:RUN.start_cash*.98, hi:RUN.start_cash*1.02};
   // Percentiles, not min and max: one fly clinging on at $505 would otherwise squash the whole
   // swarm into the top of the pane. Flies outside the band are clamped to its edges.
@@ -206,38 +225,42 @@ function drawFlies(r,f,time){
   for(const tribe of RUN.tribes){
     const rows=f.tribes[tribe].flies, col=TRIBE_COLOR[tribe];
     const lane=tribe==='real'?0:1;
-    const bodies=[];
+    const doomed=[], kept=[];
     for(let i=0;i<rows.length;i++){
-      if(rows[i].broke) continue;                       // the dead are in the pile, not the sky
       const s=flyState(f,tribe,i,time);
       const wander=Math.sin(time*0.7+s.phase)*9 + Math.sin(time*0.23+s.phase*1.7)*16;
       const x=r.x+14+((i+s.driftX*0.8)/rows.length)*(r.w-28) + wander*0.5;
       const y=yOf(rows[i].equity) + Math.sin(time*1.9+s.phase)*5 + (lane?3:-3);
-      bodies.push([x,y,s]);
+      (rows[i].eliminated?doomed:kept).push([x,y,s]);
     }
-    glowPath(col, 9, ()=>{
-      for(const [x,y] of bodies){ ctx.moveTo(x+2.1,y); ctx.arc(x,y,2.1,0,6.283); }
-    });
-    ctx.save(); ctx.globalAlpha=.55; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath();
-    for(const [x,y,s] of bodies){                        // wings, redrawn every frame
-      const beat=Math.sin(time*26+s.wing)*2.6;
-      ctx.moveTo(x-1,y-1); ctx.lineTo(x-5,y-3.4-beat);
-      ctx.moveTo(x+1,y-1); ctx.lineTo(x+5,y-3.4+beat);
+    for(const [bodies,alpha,glow] of [[doomed,.3,0],[kept,1,10]]){
+      ctx.save(); ctx.globalAlpha=alpha;
+      if(glow) glowPath(col, glow, ()=>{ for(const [x,y] of bodies){ ctx.moveTo(x+2.2,y); ctx.arc(x,y,2.2,0,6.283); } });
+      else { ctx.fillStyle=col; ctx.beginPath();
+             for(const [x,y] of bodies){ ctx.moveTo(x+1.8,y); ctx.arc(x,y,1.8,0,6.283); } ctx.fill(); }
+      ctx.globalAlpha=alpha*.6; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath();
+      for(const [x,y,s] of bodies){                      // wings, redrawn every frame
+        const beat=Math.sin(time*26+s.wing)*2.6;
+        ctx.moveTo(x-1,y-1); ctx.lineTo(x-5,y-3.4-beat);
+        ctx.moveTo(x+1,y-1); ctx.lineTo(x+5,y-3.4+beat);
+      }
+      ctx.stroke(); ctx.restore();
     }
-    ctx.stroke(); ctx.restore();
   }
   return {yOf, top, bot};
 }
 
-/* ---------- the pile: every fly the run has killed, and it only ever grows ---------- */
+/* ---------- the pile: every fly selection has eliminated, and it only ever grows ----------
+   A fly eliminated in generation g lands here once generation g is over, so on screen the
+   pile holds generations 0 .. GEN-1 while GEN's losers are still in the air, dimmed.        */
 let pile=[], pileThrough=-1;
 function rebuildPile(upto){
   pile=[];
-  for(let g=0; g<=upto && g<RUN.frames.length; g++){
+  for(let g=0; g<upto && g<RUN.frames.length; g++){
     const f=RUN.frames[g];
     for(const tribe of RUN.tribes){
       f.tribes[tribe].flies.forEach((fly,i)=>{
-        if(!fly.broke) return;
+        if(!fly.eliminated) return;
         const R=seeded(g*7919 + (tribe==='real'?1:2)*131 + i);
         pile.push({tribe, u:R(), v:R(), born:g});
       });
@@ -249,21 +272,23 @@ function drawPile(r){
   pane(r,null);
   const total=pile.length;
   const shown=pile.slice(-PILE_MAX);
-  const cols=Math.max(8,Math.floor((r.w-14)/5)), height=Math.max(1,Math.floor((r.h-26)/4.5));
-  const stack=new Int32Array(cols);
+  // the pitch shrinks as the pile grows, so thousands of flies still fit the strip
+  const area=(r.w-14)*(r.h-26), pitch=clamp(Math.sqrt(area/Math.max(1,shown.length))*0.92,2.2,5);
+  const cols=Math.max(8,Math.floor((r.w-14)/pitch)), height=Math.max(1,Math.floor((r.h-26)/pitch));
+  const stack=new Int32Array(cols), rad=pitch*.36;
   const heap={real:[], scrambled:[]};
   for(const p of shown){
     const c=Math.min(cols-1,Math.floor(p.u*cols));
     const level=stack[c]++;
-    heap[p.tribe].push([r.x+7+c*5+2.5, r.y+r.h-6-(level%height)*4.5 - p.v*1.4]);
+    heap[p.tribe].push([r.x+7+c*pitch+pitch/2, r.y+r.h-6-(level%height)*pitch - p.v*0.8]);
   }
   for(const tribe of RUN.tribes){
-    ctx.save(); ctx.globalAlpha=.62; ctx.fillStyle=TRIBE_COLOR[tribe]; ctx.beginPath();
-    for(const [x,y] of heap[tribe]){ ctx.moveTo(x+1.7,y); ctx.arc(x,y,1.7,0,6.283); }
+    ctx.save(); ctx.globalAlpha=.6; ctx.fillStyle=TRIBE_COLOR[tribe]; ctx.beginPath();
+    for(const [x,y] of heap[tribe]){ ctx.moveTo(x+rad,y); ctx.arc(x,y,rad,0,6.283); }
     ctx.fill(); ctx.restore();
   }
-  label('the pile',r.x+10,r.y+15,{color:C.dim});
-  label(`${total} dead`,r.x+r.w-10,r.y+15,{color:total?C.locked:C.dim,align:'right'});
+  label('the pile · eliminated by selection',r.x+10,r.y+15,{color:C.dim});
+  label(`${total.toLocaleString('en-US')} eliminated`,r.x+r.w-10,r.y+15,{color:total?C.locked:C.dim,align:'right'});
 }
 
 /* ---------- the hero: trail, tag, equity line, family tree ---------- */
@@ -332,15 +357,16 @@ function drawHero(r,f,time,scale){
 
 /* ---------- panels ---------- */
 function drawScore(r,f){
-  pane(r,'scoreboard');
+  pane(r,'scoreboard · 4 fixed days');
   const rows=[];
   for(const tribe of RUN.tribes){
     const d=f.tribes[tribe];
-    rows.push({name:tribe, best:d.equity.best, median:d.equity.median, dead:d.broke,
-               trades:d.trades.median, color:TRIBE_COLOR[tribe], tribe:true});
+    rows.push({name:tribe, best:d.equity.best, median:d.equity.median, survived:d.survived,
+               trades:d.trades.median_per_day, color:TRIBE_COLOR[tribe], tribe:true});
   }
+  const comp=RUN.competitor_results||{};
   for(const name of RUN.competitors)
-    if(f.competitors[name]!=null) rows.push({name:name.replace(/_/g,' '), best:f.competitors[name], color:C.dim});
+    if(comp[name]) rows.push({name:name.replace(/_/g,' '), best:comp[name].final_equity, color:C.dim});
   const all=rows.map(q=>q.best).concat(RUN.start_cash);
   const lo=Math.min(...all), hi=Math.max(...all);
   let y=r.y+38;
@@ -353,7 +379,7 @@ function drawScore(r,f){
     ctx.fillStyle=row.color; ctx.fillRect(bx,y+7,Math.max(2,bw*u),3);
     const base=clamp((RUN.start_cash-lo)/Math.max(hi-lo,1e-9),0,1);
     ctx.fillStyle=C.ink; ctx.globalAlpha=.5; ctx.fillRect(bx+bw*base,y+5,1,7); ctx.globalAlpha=1;
-    if(row.tribe) label(`median ${money(row.median)}   dead ${row.dead}   trades ${row.trades}`,
+    if(row.tribe) label(`median ${money(row.median)}   kept ${row.survived}   ${(+row.trades).toFixed(1)} trades/day`,
                         r.x+10, y+24, {color:C.dim, size:9});
     y+=step;
   }
@@ -361,7 +387,7 @@ function drawScore(r,f){
 
 function drawMesh(r,f,time){
   pane(r,'brain activity');
-  const heat=clamp(f.tribes.real.trades.median/45,0,1);
+  const heat=clamp(f.tribes.real.trades.median_per_day/12,0,1);
   const R=seeded(7), n=22, pts=[];
   for(let i=0;i<n;i++) pts.push([r.x+14+R()*(r.w-28), r.y+30+R()*(r.h-46)]);
   ctx.save(); ctx.strokeStyle=C.real; ctx.globalAlpha=.22; ctx.lineWidth=1; ctx.beginPath();
@@ -378,7 +404,7 @@ function drawMesh(r,f,time){
       ctx.moveTo(p[0]+rad,p[1]); ctx.arc(p[0],p[1],rad,0,6.283);
     });
   });
-  label(`median trades ${f.tribes.real.trades.median}`, r.x+10, r.y+r.h-10, {color:C.dim, size:9});
+  label(`median ${(+f.tribes.real.trades.median_per_day).toFixed(1)} trades/day`, r.x+10, r.y+r.h-10, {color:C.dim, size:9});
 }
 
 function drawLocked(r,time){
@@ -395,16 +421,15 @@ function drawLocked(r,time){
 }
 
 function drawHead(r,f){
-  const move=f.window.price_move_pct;
   value(`GEN ${String(f.generation).padStart(2,'0')}`, r.x, r.y+26, {color:C.ink, size:34});
   const gw=130;
   label(`of ${RUN.generations-1}`, r.x+gw, r.y+24, {color:C.dim, size:11});
-  label(f.window.first_time.slice(0,16).replace('T',' '), r.x+gw+70, r.y+14, {color:C.dim, size:10});
-  label(`${move>=0?'+':''}${move.toFixed(2)}% this window`, r.x+gw+70, r.y+27,
-        {color:move>=0?C.real:C.scrambled, size:10});
-  const bars=candlesFor(f);
-  label(bars?`btc-usd · ${RUN.candle_minutes||15}m candles`:'no candles in this export',
-        r.x+r.w, r.y+27, {color:bars?C.dim:C.locked, size:9, align:'right'});
+  label('the same four days, every generation', r.x+gw+70, r.y+14, {color:C.dim, size:10});
+  label(`top ${Math.round((RUN.survive_share||.2)*100)}% reproduce · the rest are eliminated`,
+        r.x+gw+70, r.y+27, {color:C.dim, size:10});
+  const any=days().some(d=>candlesFor(d));
+  label(any?`btc-usd · ${RUN.candle_minutes||30}m candles`:'no candles in this export',
+        r.x+r.w, r.y+27, {color:any?C.dim:C.locked, size:9, align:'right'});
 }
 
 /* ---------- scanlines and the sweep, once, over the finished frame ---------- */
@@ -436,12 +461,13 @@ function render(time){
   drawHead(L.head,f);
 
   pane(L.world,null);
-  const chart=chartLayer(L.world,f);
+  const chart=chartLayer(L.world);
   ctx.save();
   ctx.beginPath(); ctx.rect(L.world.x,L.world.y,L.world.w,L.world.h); ctx.clip();
   ctx.globalAlpha=.82;
   ctx.drawImage(chart, L.world.x, L.world.y, L.world.w, L.world.h);
   ctx.globalAlpha=1;
+  dayLabels(L.world);
   const scale=drawFlies(L.world,f,time);
   drawHero(L.world,f,time,scale);
   ctx.restore();
