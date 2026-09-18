@@ -652,7 +652,7 @@ room({id:'floor',col:0,row:1,w:9,d:8,h:3,
     pen.books(8.4,6.4,0,3);
     // the caption sits below the whole room, which in iso means high i AND high j
     const [capx,capy]=p(8.6,8.6,.02);
-    if(f)textCentred(pen,'THIS DAY MOVED '+(f.window.price_move_pct>=0?'+':'')+f.window.price_move_pct+'%',
+    if(f)textCentred(pen,'THIS DAY MOVED '+(f.window.price_move_pct>=0?'+':'')+f.window.price_move_pct.toFixed(2)+'%',
               [capx,capy],15,{ink:f.window.price_move_pct>=0?'teal':'coral',tone:.95,w:1.3});
     textCentred(pen,'ONE DESK = TWO FLIES, ONE LAMP EACH',[capx,capy+26],9.5,{ink:'blue',tone:.55,w:.9});
   }});
