@@ -16,3 +16,8 @@ finale_merge cpu uv run python finale_merge.py --run runs/day6_full
 # d. Tomorrow's config: 12 generations on the four training days, scored every generation on two
 #    validation days it is never selected on, with fee-free scores logged for both tribes.
 validation_run gpu uv run python -u -m scripts.run_evolution --generations 12 --val-windows 2 --run-id day7_validation
+
+# e. Once all of that has landed: re-export the validation run and the finale into the visuals,
+#    redraw the film-pack charts, rebuild the one-file HQ, and commit + push them on the visuals
+#    branch. CPU only, and last, so it can never hold up the jobs above.
+visuals_refresh cpu bash /home/xxfactionsxx/hedgefly/hedgefly-visuals/scripts/refresh_visuals.sh
