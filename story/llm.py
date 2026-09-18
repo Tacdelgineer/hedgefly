@@ -25,7 +25,9 @@ import requests
 from market import BUY, HOLD, SELL, Wallet, trade_window
 from market.chart import WINDOW
 
-LOCAL_URL = os.environ.get("HEDGEFLY_LLM_URL", "http://localhost:8000/v1")
+# Ollama on this Spark listens on its Tailscale address, not on localhost. Override with the
+# environment variable when the model is served elsewhere.
+LOCAL_URL = os.environ.get("HEDGEFLY_LLM_URL", "http://100.103.129.82:11434/v1")
 LOCAL_MODEL = os.environ.get("HEDGEFLY_LLM_MODEL", "Qwen3.8-27B")
 TIMEOUT = 120
 SCALE = 100                 # the window's low is 0 and its high is 100
@@ -48,10 +50,17 @@ Answer with one word: BUY, SELL or HOLD. No explanation."""
 
 
 class LocalModel:
-    """A chat call to the local endpoint. Deterministic: temperature 0, no sampling."""
+    """A chat call to the local endpoint. Deterministic: temperature 0, no sampling.
 
-    def __init__(self, url: str = LOCAL_URL, model: str = LOCAL_MODEL, timeout: int = TIMEOUT):
-        self.url, self.model, self.timeout = url.rstrip("/"), model, timeout
+    Reasoning is switched off. Qwen3-family models think before they answer, and Ollama puts
+    that thinking in a separate "reasoning" field that still counts against max_tokens: with the
+    trader's 8-token budget the whole budget went on thinking, the answer came back empty, and an
+    empty answer parses as HOLD - a trader that silently never trades. reasoning_effort "none"
+    makes the model answer directly."""
+
+    def __init__(self, url: str = LOCAL_URL, model: str = LOCAL_MODEL, timeout: int = TIMEOUT,
+                 reasoning: str | None = "none"):
+        self.url, self.model, self.timeout, self.reasoning = url.rstrip("/"), model, timeout, reasoning
         self.session = requests.Session()
         self.calls = 0
 
@@ -71,6 +80,8 @@ class LocalModel:
     def chat(self, system: str, user: str, max_tokens: int = 8, temperature: float = 0.0) -> str:
         payload = {"model": self.model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        if self.reasoning is not None:
+            payload["reasoning_effort"] = self.reasoning
         response = self.session.post(f"{self.url}/chat/completions", json=payload, timeout=self.timeout)
         response.raise_for_status()
         self.calls += 1
