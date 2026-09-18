@@ -194,8 +194,8 @@ Reference point: nfly reports whole-CNS inference around 8 ms/step on an RTX 509
 The Spark will differ, so measure it.
 
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
-- A generation is 2 tribes x 288 bars x 4 brain steps per bar. Measured on a GB10 at
-  population 100: 12.5 min per generation at 576 bars, so ~6.3 min at 288.
+- A generation is 2 tribes x 288 bars x 4 brain steps per bar. Measured on the GB10 at
+  population 100: 12.50 min per generation at 576 bars, 6.28 min at 288 (runs/day4_sanity).
 - Target: <= 10 minutes per generation for both tribes combined.
 - Measured minutes per generation are reported from a real run, not from the benchmark.
 - If too slow, cut in this order:
