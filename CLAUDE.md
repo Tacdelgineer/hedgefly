@@ -4,7 +4,7 @@ Read PLAN.md before doing anything. Its NON-NEGOTIABLE RULES override every othe
 goal, including speed and "making it work".
 
 - Work only on the task you were given. When it's done, stop and report.
-- Never read `data/btc_locked_test.parquet` anywhere except `finale.py`.
+- Never read `data/btc_locked_test.parquet` anywhere except the two finale scripts, `finale_flies.py` and `finale_llm.py`.
 - Never train or modify brain weights.
 - Every number shown to viewers must come from `runs/` logs.
 - On the DGX Spark (ARM64), confirm the GPU is actually used; never silently fall back to CPU.
