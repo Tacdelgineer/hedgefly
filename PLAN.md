@@ -125,10 +125,20 @@ Deadline: published within 7 days.
 
 ## FINALE (`finale.py`)
 
-- Load the top 10 flies from each tribe from the last generation.
+- Load the top 10 flies from each tribe from the last generation, out of that generation's
+  log, so the finale runs the flies the logs say won.
 - Trade the entire locked test set once. Same fees and rules.
-- Output: equity curves for real champions, scrambled champions, Random, Buy-and-hold.
-- Run once, on camera. Whatever happens is the ending.
+- Then trade it a SECOND time with the fees set to zero, to show what the fees cost. The
+  minimum hold stays on: it is a rule, not a fee.
+- Runs against the champions: Momentum, Random, Buy-and-hold, and a local Qwen3.8-27B given
+  the same 64 bars described in words, on the same 0-100 window scale, obeying the same
+  rules. The model is asked every `--llm-every` bars (hourly by default) and holds in
+  between; one call per five-minute bar is 52,915 calls over six months. The endpoint is
+  checked before the run starts, never in the middle of it.
+- Output: `runs/<run_id>/finale.json` - equity curves for real champions, scrambled
+  champions and every competitor, in both fee regimes.
+- Run once, on camera. Whatever happens is the ending. `--rehearse N` trades the last N bars
+  of the EVOLVE set instead, so the rig can be tested without anyone seeing the ending.
 
 ---
 
