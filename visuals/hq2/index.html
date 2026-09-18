@@ -489,7 +489,8 @@ room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
       text(pen,'ITS LAST REPLY',pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
       text(pen,last[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
       text(pen,'BUY '+r.counts.BUY+'  SELL '+r.counts.SELL+'  HOLD '+r.counts.HOLD+' OF '+r.asked.toLocaleString('en-US'),pen.wallQuad('j',R0,1.5,.01,.01,.1)[0],7,{wall:'j',tone:.75});
-      text(pen,money(llm.final_equity)+' AFTER SIX MONTHS',pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
+      // say what the number covers, from the data: a rehearsal is a day or two, not the vault
+      text(pen,money(llm.final_equity)+(fin.rehearsal?' IN THE REHEARSAL':' OVER THE LOCKED MONTHS'),pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
     else{text(pen,'WAITING FOR THE FINALE',pen.wallQuad('j',R0,2.3,.01,.01,.1)[0],12,{wall:'j',tone:.7,w:1.2});
       text(pen,fin&&fin.llm?fin.llm.model:'QWEN3.6 35B, LOCAL',pen.wallQuad('j',R0,1.7,.01,.01,.1)[0],7,{wall:'j',tone:.5})}
     pen.rug(1.6,3.2,4,3,{ink:'slate',tone:.12,border:'slate'});

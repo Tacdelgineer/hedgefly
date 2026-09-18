@@ -382,7 +382,7 @@ const GLYPHS={
  6:'40100105163645443303', 7:'004026', 8:'103041453616050110|0333',
  9:'4313030201103041453616', '$':'413010010213334445361605|2027', '%':'0010|4006|3646',
  '-':'1343', '+':'1343|2125', '.':'2625', ',':'2635', ':':'2221|2524', '/':'4006',
- '(':'30050136', ')':'10450140', '*':'2024|0422|4022', '·':'2323', "'":'2021', '!':'2023|2626', '?':'011030414223|2626',
+ '(':'30121436', ')':'10323416', '*':'2024|0422|4022', '·':'2323', "'":'2021', '!':'2023|2626', '?':'011030414223|2626',
 };
 function text(pen,str,at,size,o={}){
   const ink=o.ink||'ghost',tone=o.tone==null?.9:o.tone,w=o.w||1.1,gap=o.gap==null?.38:o.gap;
@@ -864,7 +864,8 @@ room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
       text(pen,'ITS LAST REPLY',pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
       text(pen,last[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
       text(pen,'BUY '+r.counts.BUY+'  SELL '+r.counts.SELL+'  HOLD '+r.counts.HOLD+' OF '+r.asked.toLocaleString('en-US'),pen.wallQuad('j',R0,1.5,.01,.01,.1)[0],7,{wall:'j',tone:.75});
-      text(pen,money(llm.final_equity)+' AFTER SIX MONTHS',pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
+      // say what the number covers, from the data: a rehearsal is a day or two, not the vault
+      text(pen,money(llm.final_equity)+(fin.rehearsal?' IN THE REHEARSAL':' OVER THE LOCKED MONTHS'),pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
     else{text(pen,'WAITING FOR THE FINALE',pen.wallQuad('j',R0,2.3,.01,.01,.1)[0],12,{wall:'j',tone:.7,w:1.2});
       text(pen,fin&&fin.llm?fin.llm.model:'QWEN3.6 35B, LOCAL',pen.wallQuad('j',R0,1.7,.01,.01,.1)[0],7,{wall:'j',tone:.5})}
     pen.rug(1.6,3.2,4,3,{ink:'slate',tone:.12,border:'slate'});

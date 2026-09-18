@@ -110,7 +110,7 @@ const CHARTS={
     if(hourly)for(const [n,r] of Object.entries(hourly.traders))rows.push({name:n.replace(/_/g,' ')+', hourly',paid:r.final_equity,free:hourlyFree&&hourlyFree.traders[n]?.final_equity,ink:inkOf(n)});
     rows.sort((a,b)=>b.paid-a.paid);
     const all=rows.flatMap(r=>[r.paid,r.free].filter(v=>v!=null)).concat(1000);
-    const lo=Math.min(...all)*.985,hi=Math.max(...all)*1.01,box={x:W*.3,y:H*.2,w:W*.62,h:H*.66};
+    const lo=Math.min(...all)*.985,hi=Math.max(...all)*1.005,box={x:W*.3,y:H*.2,w:W*.46,h:H*.66};
     const X=v=>box.x+(v-lo)/(hi-lo)*box.w,rh=box.h/rows.length;
     pen.line([[X(1000),box.y-10*u],[X(1000),box.y+box.h]],'ghost',2*u,{tone:.5,dash:[10*u,10*u],amp:0});
     text(pen,'$1,000',[X(1000)-50*u,box.y-50*u],22*u,{tone:.6,w:1.6*u});
@@ -119,7 +119,7 @@ const CHARTS={
       pen.tint([[X(lo),y],[X(r.paid),y],[X(r.paid),y+h],[X(lo),y+h]],r.ink,.55);
       pen.line([[X(r.paid),y],[X(r.paid),y+h]],r.ink,4*u,{amp:0});
       if(r.free!=null){pen.line([[X(r.free),y-4*u],[X(r.free),y+h+4*u]],'ghost',3*u,{tone:.8,amp:0});}
-      text(pen,money(r.paid)+(r.free!=null?'   no fees '+money(r.free):''),[X(Math.max(r.paid,r.free??0))+18*u,y+h*.2],Math.min(30*u,h*.5),{ink:r.ink,w:2*u})});
+      text(pen,money(r.paid)+(r.free!=null?'   no fees '+money(r.free):''),[box.x+box.w+40*u,y+h*.2],Math.min(30*u,h*.5),{ink:r.ink,w:2*u})});
     text(pen,'bars: with fees  ·  white tick: the same decisions with no fees',[box.x,box.y+box.h+30*u],24*u,{tone:.6,w:1.8*u});
   },
   finale_curves(run,pen,W,H,u){
