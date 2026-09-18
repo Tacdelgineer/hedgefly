@@ -31,6 +31,7 @@
   @media (max-width:1100px){#inset{--s:.34}}
   #inset .tag{position:absolute;left:8px;top:-18px;font:10px var(--mono);letter-spacing:.14em;color:var(--ghost);opacity:.7}
   body.vertical #ui{padding-bottom:16px} body.vertical #label{min-width:0}
+  body.clean #ui,body.clean #inset{display:none!important}
   body.vertical #inset{--s:calc((100vw - 28px) / 1280px);bottom:150px}
 </style>
 </head><body>
@@ -41,7 +42,9 @@
   <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
   <span id="label">generation 0</span>
   <span id="rooms"></span>
-  <button id="terminal" title="the fly terminal, as an inset">terminal</button>
+  <button id="building" title="the whole building (b)">building</button>
+  <button id="herocam" title="follow the hero fly on its rounds (h)">hero cam</button>
+  <button id="terminal" title="the fly terminal, as an inset (t)">terminal</button>
   <div id="stat"></div>
 </div>
 <!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
@@ -51,6 +54,7 @@
    NATURAL SELECTION CAPITAL HQ — neon riso (visuals/style.md), data contract v2
    (visuals/hq/data-contract.md). Six rooms, one run, replayed generation by generation.
    ===================================================================== */
+if(new URLSearchParams(location.search).has('record')){window.__HEDGEFLY_VCLOCK__=0;window.__HEDGEFLY_VCLOCK_DRIVEN__=true}
 /* =====================================================================
    RUNTIME — layout, camera, 12fps boil, input, export
    ===================================================================== */
@@ -59,8 +63,13 @@ function room(def){ROOMS.push({w:10,d:10,h:3,col:0,row:0,...def})}
 const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
 const qs=new URLSearchParams(location.search);
 const FPS=12,BOIL_EVERY=4,GAP=2.5,MIN_Z=.15,MAX_Z=6;
-let W=1,H=1,dpr=1,started=performance.now(),lastFrame=-1,lastCam='';
-const cam={x:0,y:0,zoom:1};let vel={x:0,y:0},tween=null,idleSince=performance.now(),tourIndex=-1;
+// One clock for everything. The recorder (scripts/record_hq.mjs) sets __HEDGEFLY_VCLOCK__ and
+// steps it frame by frame, so a recording is the same every time and never drops a frame.
+const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:performance.now();
+let W=1,H=1,dpr=1,started=NOW(),lastFrame=-1,lastCam='';
+const cam={x:0,y:0,zoom:1};let vel={x:0,y:0},tween=null,idleSince=NOW(),tourIndex=-1;
+// The camera rests on camBase and drifts slowly around it; tweens and the hero cam move the base.
+let camBase={x:0,y:0,zoom:1},userMoved=false;
 
 function layout(){
   const SLOT=Math.max(...ROOMS.map(r=>Math.max(r.w,r.d)))+GAP;   // grid pitch in tiles
@@ -71,7 +80,7 @@ function layout(){
 }
 const framing=b=>({x:(b[0]+b[2])/2,y:(b[1]+b[3])/2,zoom:clamp(Math.min(W/(b[2]-b[0]),H/(b[3]-b[1]))*.92,MIN_Z,MAX_Z)});
 function fitAll(){const b=ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);return framing(b)}
-function flyTo(target,ms=1100){tween={from:{...cam},to:target,start:performance.now(),ms}}
+function flyTo(target,ms=1100){tween={from:{...cam},to:target,start:NOW(),ms}}
 const toWorld=(sx,sy)=>({x:(sx-W/2)/cam.zoom+cam.x,y:(sy-H/2)/cam.zoom+cam.y});
 function resize(){W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastCam=''}
 
@@ -86,33 +95,48 @@ function draw(frameNo){
     try{if(r.shell!==false)pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id))}catch(e){console.error('room '+r.id,e)}
     ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
   }
+  try{if(typeof overlay==='function')overlay(makePen(ctx,{ox:0,oy:0,boil}),t,a,b)}catch(e){console.error('overlay',e)}
+  ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
   ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
 }
 
-function frame(now){
-  requestAnimationFrame(frame);
+function frame(){
+  if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(frame);
+  stepFrame();
+}
+// camera drift: a slow, never-repeating wander, only once the viewer has left the camera alone
+function drift(s){return {x:Math.sin(s*.13)*16+Math.sin(s*.047)*9,y:Math.sin(s*.09+1.3)*9,z:1+Math.sin(s*.061)*.035}}
+function stepFrame(){
+  const now=NOW();
   if(innerWidth!==W||innerHeight!==H)resize();
   if(tween){const u=clamp((now-tween.start)/tween.ms,0,1),e=ease(u);
     cam.x=lerp(tween.from.x,tween.to.x,e);cam.y=lerp(tween.from.y,tween.to.y,e);cam.zoom=lerp(tween.from.zoom,tween.to.zoom,e)*(1-Math.sin(u*Math.PI)*.12);
-    if(u>=1)tween=null}
-  else if(!pointers.size){cam.x+=vel.x*16;cam.y+=vel.y*16;vel.x*=.92;vel.y*=.92}
+    if(u>=1){camBase={...tween.to};tween=null}}
+  else if(pointers.size||userMoved){camBase={x:cam.x,y:cam.y,zoom:cam.zoom};userMoved=false}
+  else{
+    if(Math.abs(vel.x)+Math.abs(vel.y)>1e-5){camBase.x+=vel.x*16;camBase.y+=vel.y*16;vel.x*=.92;vel.y*=.92}
+    if(typeof heroCamTarget==='function'){const h=heroCamTarget();
+      if(h){camBase.x=lerp(camBase.x,h.x,.09);camBase.y=lerp(camBase.y,h.y,.09);camBase.zoom=lerp(camBase.zoom,h.zoom,.04)}}
+    const quiet=!qs.has('still')&&now-idleSince>3500,d=quiet?drift(now/1000):{x:0,y:0,z:1};
+    cam.x=camBase.x+d.x;cam.y=camBase.y+d.y;cam.zoom=camBase.zoom*d.z;
+  }
   const f=qs.has('frame')?+qs.get('frame'):Math.floor((now-started)/1000*FPS);
-  const key=`${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(4)},${W},${H},${GEN}`;
+  const key=`${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(4)},${W},${H},${GEN},${Math.round(SEL*48)}`;
   if(f!==lastFrame||key!==lastCam){draw(f);lastFrame=f;lastCam=key}
 }
 
 const pointers=new Map();let drag=null,pinch=null;
-const touch=()=>{idleSince=performance.now();tween=null};
+const touch=()=>{idleSince=NOW();tween=null;userMoved=true};
 stage.addEventListener('pointerdown',e=>{touch();stage.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});vel={x:0,y:0};
-  drag={x:e.clientX,y:e.clientY,t:performance.now()};
+  drag={x:e.clientX,y:e.clientY,t:NOW()};
   if(pointers.size===2){const [p1,p2]=[...pointers.values()];pinch={d:Math.hypot(p1.x-p2.x,p1.y-p2.y),zoom:cam.zoom,anchor:toWorld((p1.x+p2.x)/2,(p1.y+p2.y)/2)}}
   stage.classList.add('drag')});
 stage.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;touch();pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pointers.size>=2&&pinch){const [p1,p2]=[...pointers.values()],mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2;
     cam.zoom=clamp(pinch.zoom*Math.hypot(p1.x-p2.x,p1.y-p2.y)/Math.max(1,pinch.d),MIN_Z,MAX_Z);cam.x=pinch.anchor.x-(mx-W/2)/cam.zoom;cam.y=pinch.anchor.y-(my-H/2)/cam.zoom;return}
-  if(!drag)return;const now=performance.now(),dx=e.clientX-drag.x,dy=e.clientY-drag.y,dt=Math.max(8,now-drag.t);
+  if(!drag)return;const now=NOW(),dx=e.clientX-drag.x,dy=e.clientY-drag.y,dt=Math.max(8,now-drag.t);
   cam.x-=dx/cam.zoom;cam.y-=dy/cam.zoom;vel={x:lerp(vel.x,-dx/cam.zoom/dt,.6),y:lerp(vel.y,-dy/cam.zoom/dt,.6)};drag={x:e.clientX,y:e.clientY,t:now}});
-const up=e=>{pointers.delete(e.pointerId);pinch=null;if(pointers.size)return;if(!drag||performance.now()-drag.t>90)vel={x:0,y:0};drag=null;stage.classList.remove('drag')};
+const up=e=>{pointers.delete(e.pointerId);pinch=null;if(pointers.size)return;if(!drag||NOW()-drag.t>90)vel={x:0,y:0};drag=null;stage.classList.remove('drag')};
 stage.addEventListener('pointerup',up);stage.addEventListener('pointercancel',up);
 stage.addEventListener('wheel',e=>{e.preventDefault();touch();vel={x:0,y:0};const a=toWorld(e.clientX,e.clientY);
   cam.zoom=clamp(cam.zoom*Math.exp(-clamp(e.deltaY,-300,300)*.0015),MIN_Z,MAX_Z);cam.x=a.x-(e.clientX-W/2)/cam.zoom;cam.y=a.y-(e.clientY-H/2)/cam.zoom},{passive:false});
@@ -131,16 +155,23 @@ function start(){
   const r=ROOMS.find(r=>r.id===qs.get('room'));
   Object.assign(cam,r?framing(r.bounds):fitAll());
   if(qs.has('zoom'))cam.zoom=+qs.get('zoom');
-  requestAnimationFrame(frame);
+  camBase={...cam};
+  if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(frame);
 }
 
 
 /* ---------- the run being replayed ---------- */
 let RUN=null,GEN=0,PLAYING=true;
+// SEL: how far through this generation's selection event we are - 0 while the flies trade, 1 once
+// the eliminated have fallen, the survivors lit up and the children hatched. Paused views show 1.
+let SEL=1,OPEN=1;
+const easeIn=u=>u*u*u;
+const elimAt=g=>RUN&&RUN.frames[g]?RUN.tribes.reduce((n,t)=>n+RUN.frames[g].tribes[t].eliminated,0):0;
 const TRIBE_INK={real:'cyan',scrambled:'magenta'};
 const F=()=>RUN&&RUN.frames[Math.min(GEN,RUN.frames.length-1)];
 const hero=tribe=>{const f=F();return f&&f.heroes[tribe]};
 const eliminatedBefore=g=>{let n=0;if(RUN)for(let k=0;k<g&&k<RUN.frames.length;k++)for(const t of RUN.tribes)n+=RUN.frames[k].tribes[t].eliminated;return n};
+const fallen=()=>eliminatedBefore(GEN)+Math.round(SEL*elimAt(GEN));
 const S3=v=>String(v).padStart(2,'0');
 
 /* =====================  THE LAB  =====================
@@ -232,21 +263,36 @@ room({id:'brain',col:1,row:0,w:7,d:7,h:3.4,
 
 /* =====================  THE VAULT  =====================
    The last six months, sealed. It opens in the finale and not before. */
-room({id:'vault',col:2,row:0,w:7,d:7,h:3.2,
+room({id:'vault',col:3,row:0,w:7,d:7,h:3.2,
   style:{floor:['slate',.34],wall:['slate',.14],wall2:['slate',.18],planks:false},
   draw(pen,t,R){
     const p=pen.p;
     pen.shape(pen.wallQuad('i',1.4,.05,4.2,2.75,.08),['slate',.3],{w:1.5});
     pen.shape(pen.wallQuad('i',1.7,.25,3.6,2.35,.14),['amber',.14],{w:1.2,line:'amber'});
     const [cx,cy]=pen.wallQuad('i',3.5,1.42,.01,.01,.2)[0];
-    pen.shape(pen.circle(cx,cy,46,26),['slate',.4],{w:1.6,line:'amber'});
-    pen.shape(pen.circle(cx,cy,34,22),['paper',0],{w:1.2,line:'amber'});
-    const turn=Math.sin(t*.5)*.05;
+    const fin=RUN&&RUN.finale,open=fin?OPEN:0;
+    if(open>0){
+      // behind the door: the finale's scoreboard, every trader's final equity with fees
+      pen.shape(pen.wallQuad('i',1.75,.3,3.5,2.25,.1),['paper',0],{w:.8,line:'amber',lineTone:.5});
+      pen.glow(3.5,.4,.02,1.6,'amber',.25*open);
+      const traders=Object.entries(fin.passes.with_fees.traders).sort((a,b)=>b[1].final_equity-a[1].final_equity).slice(0,6);
+      const vals=traders.map(([,r])=>r.final_equity).concat(1000),lo=Math.min(...vals)*.99,hi=Math.max(...vals)*1.005;
+      const inkOf=n=>n.startsWith('real')?'cyan':n.startsWith('scrambled')?'magenta':n==='llm'?'ghost':'slate';
+      traders.forEach(([n,r],k)=>{const z=2.25-k*.33,ink=inkOf(n),len=2.9*(r.final_equity-lo)/(hi-lo);
+        pen.tint(pen.wallQuad('i',1.95,z-.2,Math.max(.05,len*open),.16,.12),ink,.75);
+        text(pen,n.replace(/_champions/,'').replace(/_/g,' '),pen.wallQuad('i',1.95,z+.1,.01,.01,.13)[0],6,{wall:'i',ink,w:.7});
+        text(pen,money(r.final_equity),pen.wallQuad('i',1.95+Math.max(.05,len*open)+.08,z-.02,.01,.01,.13)[0],6.5,{wall:'i',ink,w:.8})});
+    }
+    // the door swings out to the left as it opens
+    const dx=-open*120,sq=1-open*.72;
+    pen.shape(ellipse2(cx+dx,cy,46*sq,46,0,26),['slate',.4],{w:1.6,line:'amber'});
+    pen.shape(ellipse2(cx+dx,cy,34*sq,34,0,22),['paper',0],{w:1.2,line:'amber'});
+    const turn=Math.sin(t*.5)*.05+open*2.4;
     for(let k=0;k<6;k++){const a=turn+k*TAU/6;
-      pen.line([[cx+Math.cos(a)*7,cy+Math.sin(a)*7],[cx+Math.cos(a)*31,cy+Math.sin(a)*31]],'amber',2.4,{tone:.85});
-      pen.dot(cx+Math.cos(a)*31,cy+Math.sin(a)*31,3,'amber',.9)}
-    pen.halo(cx,cy,14,'amber',.8);pen.shape(pen.circle(cx,cy,8,14),['amber',.9],{line:'amber'});
-    textCentred(pen,'LOCKED',[cx,cy+54],22,{ink:'amber',w:1.8});
+      pen.line([[cx+dx+Math.cos(a)*7*sq,cy+Math.sin(a)*7],[cx+dx+Math.cos(a)*31*sq,cy+Math.sin(a)*31]],'amber',2.4,{tone:.85});
+      pen.dot(cx+dx+Math.cos(a)*31*sq,cy+Math.sin(a)*31,3,'amber',.9)}
+    pen.halo(cx+dx,cy,14,'amber',.8);pen.shape(ellipse2(cx+dx,cy,8*sq,8,0,14),['amber',.9],{line:'amber'});
+    textCentred(pen,open>.5?'OPEN':'LOCKED',[cx,cy+54],22,{ink:'amber',w:1.8});
     textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'amber',tone:.95,w:1.3});
     textCentred(pen,'52,915 BARS',[cx,cy-66],11,{ink:'amber',tone:.7,w:1.1});
     for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'amber',3,{tone:.45,amp:.2});
@@ -257,7 +303,7 @@ room({id:'vault',col:2,row:0,w:7,d:7,h:3.2,
     pen.glow(3.5,3.4,.02,2.2,'amber',.12+blink*.1);
     for(const [i,j,h] of[[.6,4.4,.5],[.6,5.1,.35],[1.35,4.5,.4]])pen.box(i,j,0,.7,.6,h,{ink:'slate',tone:.35});
     pen.fly(4.8,5.3,0,{t,pose:'stand',ink:'slate',scale:1.35,facing:-1,phase:.8});
-    textCentred(pen,'OPENS IN THE FINALE',p(4.6,7.4,.02),11,{ink:'amber',tone:.75,w:1.1});
+    textCentred(pen,fin?(fin.rehearsal?'OPENED FOR A REHEARSAL':'OPENED FOR THE FINALE'):'OPENS IN THE FINALE',p(4.6,7.4,.02),11,{ink:'amber',tone:.75,w:1.1});
     pen.lamp(6.3,1.1,{t});
   }});
 
@@ -301,13 +347,21 @@ room({id:'floor',col:0,row:1,w:10,d:8,h:3.4,
     for(const [tribe,i0] of[['real',.75],['scrambled',5.75]])for(let c=0;c<5;c++)for(let r=0;r<5;r++)
       desks.push({tribe,i:i0+c*.72,j:2.9+r*.95,n:(c*5+r)*4});
     desks.sort((a,b)=>(a.i+a.j)-(b.i+b.j));
+    // Selection: while the generation trades (SEL 0) every trader looks alike; as it is judged
+    // the eliminated tumble off their desks and fade, and the survivors' desks light up.
     for(const d of desks){
       const rows=f?f.tribes[d.tribe].flies:[],ink=TRIBE_INK[d.tribe];
-      pen.box(d.i,d.j,0,.5,.34,.28,{ink:'slate',tone:.4,w:.6,shadow:true});
+      const seats=[0,1,2,3].map(k=>rows[d.n+k]).filter(Boolean),kept=seats.filter(s=>!s.eliminated).length;
+      const box=pen.box(d.i,d.j,0,.5,.34,.28,{ink:'slate',tone:.4,w:.6,shadow:true});
+      if(kept&&SEL>0){pen.tint(box.top,ink,.45*SEL*kept/4);const [gx,gy]=p(d.i+.25,d.j+.17,.3);pen.halo(gx,gy,16*SEL,ink,.35*SEL*kept/4)}
       const [x0,y0]=p(d.i+.25,d.j+.17,.3);
       [[-9,-5],[9,-5],[-9,6],[9,6]].forEach(([dx,dy],k)=>{
         const fly=rows[d.n+k];if(!fly)return;
-        pen.minifly(x0+dx,y0+dy-6,1.05,ink,fly.eliminated?.28:1,t,d.n+k+(d.tribe==='real'?0:.5));
+        const phase=d.n+k+(d.tribe==='real'?0:.5);
+        if(fly.eliminated){const drop=easeIn(SEL)*30,side=(k%2?1:-1)*6*SEL;
+          if(SEL<.999)pen.minifly(x0+dx+side,y0+dy-6+drop,1.05,ink,lerp(.9,.25,SEL),t*(1-SEL),phase);
+          else pen.deadfly(x0+dx+side,y0+dy+24,.8,ink,.22,phase)}
+        else pen.minifly(x0+dx,y0+dy-6-3*SEL,1.05+.15*SEL,ink,1,t,phase);
       });
     }
     const walk=(t*.12)%1,jj=3+Math.abs(walk*2-1)*4.2;
@@ -316,7 +370,7 @@ room({id:'floor',col:0,row:1,w:10,d:8,h:3.4,
 
 /* =====================  THE HERO'S DESK  =====================
    One lineage, watched: the hero at work, its forebears framed on the wall, its equity line. */
-room({id:'hero',col:1,row:1,w:7,d:7,h:3.2,
+room({id:'hero',col:2,row:1,w:7,d:7,h:3.2,
   style:{floor:['slate',.3],wall:['slate',.13],wall2:['slate',.16],planks:true},
   draw(pen,t,R){
     const p=pen.p,h=hero('real');
@@ -359,10 +413,10 @@ room({id:'hero',col:1,row:1,w:7,d:7,h:3.2,
 
 /* =====================  THE PILE  =====================
    Every fly selection has eliminated, generation after generation. It only ever grows. */
-room({id:'pile',col:2,row:1,w:7,d:7,h:3,
+room({id:'pile',col:0,row:2,w:7,d:7,h:3,
   style:{floor:['slate',.24],wall:['slate',.1],wall2:['slate',.13],planks:false},
   draw(pen,t,R){
-    const p=pen.p,total=eliminatedBefore(GEN);
+    const p=pen.p,total=fallen();
     const radius=Math.min(2.7,.35+Math.sqrt(total)*.055),ci=3.6,cj=3.8;
     pen.shade(pen.ellipse(ci,cj,0,radius*1.05,radius*.95,30),.5);
     // the heap: a cone of the fallen, real and scrambled together, capped for the frame budget
@@ -374,6 +428,10 @@ room({id:'pile',col:2,row:1,w:7,d:7,h:3,
     pts.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1]));
     for(const [i,j,z,tribe,rot] of pts){const [x,y]=p(i,j,z);pen.deadfly(x,y,.9,TRIBE_INK[tribe],.5,rot)}
     const [hx,hy]=p(ci,cj,radius*.55+.1);
+    // the chute, and this generation's losers falling through it while selection happens
+    const [cx0,cy0]=p(ci,cj,3);pen.shape(pen.ellipse(ci,cj,3,.5,.5,18),['slate',.3],{w:1});
+    if(SEL>0&&SEL<1)for(let k=0;k<16;k++){const u=(SEL*2.2+k/16)%1,[fx,fy]=p(ci+Math.sin(k*2.3)*.3,cj+Math.cos(k*1.7)*.3,3-u*(3-radius*.55));
+      pen.deadfly(fx,fy,.9,k%2?'cyan':'magenta',.8,k+u*6)}
     text(pen,'THE PILE',pen.wallQuad('i',1.2,2.55,.01,.01,.08)[0],18,{wall:'i',w:1.5});
     text(pen,total.toLocaleString('en-US')+' ELIMINATED',pen.wallQuad('i',1.2,1.8,.01,.01,.08)[0],12,{wall:'i',ink:'ghost',tone:.85});
     text(pen,'BOTTOM 80% OF EVERY GENERATION',pen.wallQuad('i',1.2,1.3,.01,.01,.08)[0],7.5,{wall:'i',tone:.55});
@@ -383,80 +441,255 @@ room({id:'pile',col:2,row:1,w:7,d:7,h:3,
     pen.shape([[bx-22,by-40],[bx-12,by-44],[bx-15,by-52],[bx-25,by-48]],['slate',.4],{w:.8});
   }});
 
+
+/* =====================  THE NURSERY  =====================
+   The survivors' children hatch as selection ends, and the newcomers walk in through the door. */
+room({id:'nursery',col:1,row:1,w:8,d:7,h:3,
+  style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=F(),next=RUN&&RUN.frames[GEN+1];
+    text(pen,'THE NURSERY',pen.wallQuad('i',.9,2.6,.01,.01,.08)[0],16,{wall:'i',w:1.4});
+    if(f&&next){const b=next.tribes.real.born;
+      text(pen,b.child+' CHILDREN OF '+f.tribes.real.survived+' SURVIVORS, EACH TRIBE',pen.wallQuad('i',.9,2.0,.01,.01,.08)[0],7.5,{wall:'i',tone:.75});
+      text(pen,b.newcomer+' NEWCOMERS, EACH TRIBE',pen.wallQuad('i',.9,1.7,.01,.01,.08)[0],7.5,{wall:'i',tone:.6})}
+    else text(pen,'THE RUN ENDS HERE: NOTHING HATCHES',pen.wallQuad('i',.9,2.0,.01,.01,.08)[0],7.5,{wall:'i',tone:.6});
+    const door=pen.wallQuad('j',4.4,0,1.2,2.1,.04);pen.shape(door,['slate',.3],{w:1.2});
+    text(pen,'NEWCOMERS',pen.wallQuad('j',5.55,2.45,.01,.01,.08)[0],7,{wall:'j',tone:.6});
+    for(const [tribe,i0] of [['real',.6],['scrambled',4.4]]){
+      pen.table(i0,2.5,3.0,2.5,.7,{ink:'slate',tone:.28});
+      const n=next?next.tribes[tribe].born.child:0,ink=TRIBE_INK[tribe];
+      const eggs=[];
+      for(let k=0;k<n;k++)eggs.push([k,i0+.2+(k%10)*.27,2.68+Math.floor(k/10)*.31]);
+      eggs.sort((a,b)=>(a[1]+a[2])-(b[1]+b[2]));
+      for(const [k,i,j] of eggs){const [x,y]=p(i,j,.72),hatch=(k+1)/n*.9;
+        if(SEL<=hatch)pen.shape(ellipse2(x,y-2.5,2.3,3.1,0,10),[ink,.3],{line:ink,w:.5,lineTone:.55});
+        else{pen.shape(ellipse2(x,y,2.4,1.4,0,10),[ink,.14],{line:ink,w:.4,lineTone:.35});
+          pen.minifly(x,y-6-Math.min(1,(SEL-hatch)*6)*5,.85,ink,1,t,k)}}
+    }
+    if(next)for(const [tribe,to] of [['real',[2.1,5.6]],['scrambled',[5.9,5.6]]]){
+      const m=next.tribes[tribe].born.newcomer,ink=TRIBE_INK[tribe];
+      for(let k=0;k<m;k++){const u=clamp(SEL*1.4-.4-k*.04,0,1),i=lerp(.35,to[0]+(k%5)*.18,u),j=lerp(5.0,to[1]+Math.floor(k/5)*.2,u);
+        if(u>0){const [x,y]=p(i,j,.05);pen.minifly(x,y-5,.9,ink,.95,t,k+7)}}}
+    pen.fly(7.2,1.2,0,{t,pose:'hover',ink:'slate',scale:1.1,facing:-1,phase:.9});
+  }});
+
+/* =====================  THE MODEL'S OFFICE  =====================
+   The finale's fourth trader: a language model reading the chart in words, its replies on the wall. */
+room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
+  style:{floor:['slate',.3],wall:['slate',.12],wall2:['slate',.15],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,fin=RUN&&RUN.finale,llm=fin&&fin.passes.with_fees.traders.llm;
+    const board=pen.wallQuad('i',.6,1.0,5.6,2.0,.05);pen.shape(board,['slate',.1],{w:1.1});
+    ['WHAT IT READS, ONCE AN HOUR:','THE LAST 64 BARS, OLDEST FIRST,','SCALED 0-100 TO THEIR OWN RANGE.',
+     'NO PRICE, NO NEWS: THE FLIES\' BARS.','LONG OR FLAT. 5 BPS A SIDE.','BUY, SELL OR HOLD?'].forEach((s,k)=>
+      text(pen,s,pen.wallQuad('i',.8,2.82-k*.3,.01,.01,.1)[0],k===5?7.5:5.8,{wall:'i',tone:k===0?.5:k===5?1:.75,w:.75}));
+    const reply=pen.wallQuad('j',.8,.9,4.9,2.1,.05);pen.shape(reply,['slate',.1],{w:1.1});
+    const R0=5.55;                                     // 'j' wall text reads up-right: anchor at the high-j edge
+    if(llm&&llm.replies){const r=llm.replies,last=r.last[r.last.length-1];
+      text(pen,'ITS LAST REPLY',pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
+      text(pen,last[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
+      text(pen,'BUY '+r.counts.BUY+'  SELL '+r.counts.SELL+'  HOLD '+r.counts.HOLD+' OF '+r.asked.toLocaleString('en-US'),pen.wallQuad('j',R0,1.5,.01,.01,.1)[0],7,{wall:'j',tone:.75});
+      text(pen,money(llm.final_equity)+' AFTER SIX MONTHS',pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
+    else{text(pen,'WAITING FOR THE FINALE',pen.wallQuad('j',R0,2.3,.01,.01,.1)[0],12,{wall:'j',tone:.7,w:1.2});
+      text(pen,fin&&fin.llm?fin.llm.model:'QWEN3.6 35B, LOCAL',pen.wallQuad('j',R0,1.7,.01,.01,.1)[0],7,{wall:'j',tone:.5})}
+    pen.rug(1.6,3.2,4,3,{ink:'slate',tone:.12,border:'slate'});
+    pen.table(2.4,3.6,2.4,1.4,.75,{ink:'slate',tone:.32});
+    const [px,py]=p(3.7,4.0,.76);
+    pen.shape([[px-14,py],[px+14,py-7],[px+22,py+2],[px-6,py+9]],['ghost',.18],{w:.7});
+    for(let k=0;k<4;k++)pen.line([[px-10+k*2,py+1-k*2+2],[px+10+k*2,py-4-k*2+2]],'ghost',.5,{tone:.4,amp:0});
+    pen.fly(3.3,4.5,.76,{t,pose:'sit',ink:'ghost',tone:.55,scale:2.1,phase:.4,glowStrength:.6,noShadow:true});
+    pen.lamp(1.1,2.2,{t});pen.plant(6.3,6.2,0,{t,size:1});
+  }});
+
+/* =====================  THE ARCHIVE  =====================
+   One poster per generation, printed as each generation is judged. */
+room({id:'archive',col:3,row:1,w:8,d:7,h:3.2,
+  style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:true},
+  draw(pen,t,R){
+    const p=pen.p;if(!RUN)return;
+    const n=RUN.generations,cols=6;
+    for(let g=0;g<n;g++){const c=g%cols,r=Math.floor(g/cols),u=.45+c*1.24,z=2.95-r*.66;
+      const printed=g<=GEN,here=g===GEN,frame=pen.wallQuad('i',u,z-.56,1.08,.56,.06);
+      pen.shape(frame,[printed?'slate':'paper',printed?.15:0],{w:here?1.5:.8,line:here?'gold':'ghost',lineTone:printed?.6:.22});
+      if(!printed)continue;
+      const fr=RUN.frames[g],at=(du,dz)=>pen.wallQuad('i',u+du,z+dz,.01,.01,.08)[0];
+      text(pen,S3(g),at(.06,-.05),6.5,{wall:'i',ink:here?'gold':'ghost',w:.8});
+      const words=headlineFor(RUN,g).toUpperCase().split(' ');let line='',rows=[];
+      for(const w of words){if((line+' '+w).trim().length>16){rows.push(line);line=w}else line=(line+' '+w).trim()}rows.push(line);
+      rows.slice(0,2).forEach((s,k)=>text(pen,s,at(.34,-.06-k*.1),3.4,{wall:'i',tone:.8,w:.45}));
+      [[fr.tribes.real.equity.median,'cyan'],[fr.tribes.scrambled.equity.median,'magenta'],[fr.heroes.real.equity,'gold']].forEach(([v,ink],k)=>
+        pen.tint(pen.wallQuad('i',u+.07,z-.5+k*.09,clamp((v-975)/70,.04,1)*.94,.055,.08),ink,.8));
+    }
+    text(pen,'THE ARCHIVE',pen.wallQuad('j',5.9,2.7,.01,.01,.08)[0],16,{wall:'j',w:1.4});
+    text(pen,'ONE POSTER PER GENERATION',pen.wallQuad('j',5.9,2.2,.01,.01,.08)[0],7.5,{wall:'j',tone:.65});
+    pen.bookcase('j',.5,2.2,2.1,{rows:4});
+    pen.fly(5.4,4.8,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:1.4});
+    pen.rug(2,3.5,4.2,2.6,{ink:'slate',tone:.12,border:'slate'});
+  }});
+
+/* =====================  THE OVERFIT ROOM  =====================
+   Training days, selected on, against validation days, never seen. Empty until that run lands. */
+room({id:'overfit',col:1,row:2,w:8,d:7,h:3.2,
+  style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,has=RUN&&RUN.frames.some(f=>f.tribes.real.validation);
+    const board=pen.wallQuad('i',.5,.8,7,2.25,.05);pen.shape(board,['slate',.1],{w:1.2});
+    text(pen,'THE OVERFIT ROOM',pen.wallQuad('j',5.9,2.75,.01,.01,.08)[0],14,{wall:'j',w:1.3});
+    text(pen,'SOLID: TRAINING DAYS, SELECTED ON',pen.wallQuad('j',5.9,2.05,.01,.01,.08)[0],6.5,{wall:'j',tone:.7});
+    text(pen,'DASHED: VALIDATION DAYS, NEVER SEEN',pen.wallQuad('j',5.9,1.78,.01,.01,.08)[0],6.5,{wall:'j',tone:.7});
+    pen.fly(6.3,4.6,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:2.2});
+    if(!has){text(pen,'EMPTY UNTIL THE',pen.wallQuad('i',1.2,2.3,.01,.01,.08)[0],13,{wall:'i',tone:.6,w:1.2});
+      text(pen,'VALIDATION RUN LANDS',pen.wallQuad('i',1.2,1.8,.01,.01,.08)[0],13,{wall:'i',tone:.6,w:1.2});return}
+    const W=(u,z)=>p(u,.07,z),fr=RUN.frames,n=fr.length;
+    const vals=fr.flatMap(f=>RUN.tribes.flatMap(tb=>[f.tribes[tb].fitness.median,f.tribes[tb].validation?f.tribes[tb].validation.fitness.median:0])).concat(0);
+    const lo=Math.min(...vals),hi=Math.max(...vals),span=Math.max(hi-lo,1e-9);
+    const Z=v=>1.05+(v-lo)/span*1.7,U=g=>.85+(n<2?0:g/(n-1))*6.2;
+    pen.line([W(.8,Z(0)),W(7.2,Z(0))],'ghost',.7,{tone:.35,dash:[4,4],amp:0});
+    for(const tb of RUN.tribes){const ink=TRIBE_INK[tb];
+      const train=fr.slice(0,GEN+1).map((f,g)=>W(U(g),Z(f.tribes[tb].fitness.median)));
+      const val=fr.slice(0,GEN+1).filter(f=>f.tribes[tb].validation).map(f=>W(U(f.generation),Z(f.tribes[tb].validation.fitness.median)));
+      if(train.length>1)pen.line(train,ink,1.6,{amp:.2});else if(train.length)pen.dot(...train[0],2.2,ink,1);
+      if(val.length>1)pen.line(val,ink,1.2,{tone:.8,dash:[5,4],amp:.2});else if(val.length)pen.dot(...val[0],2,ink,.8);
+      const f=fr[GEN].tribes[tb];
+      if(f.validation){const gap=f.fitness.median-f.validation.fitness.median;
+        text(pen,tb+' gap '+(gap>=0?'+':'')+gap.toFixed(4),pen.wallQuad('i',.8,tb==='real'?2.95:2.7,.01,.01,.08)[0],6.5,{wall:'i',ink,w:.8})}}
+  }});
+
+/* =====================  THE OVERLAY  =====================
+   What lives between rooms: a night sky, the building's sign, and the hero on its rounds. */
+const buildingBounds=()=>ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);
+function overlay(pen,t,a,b){
+  if(!RUN)return;
+  const B=buildingBounds(),cx=(B[0]+B[2])/2,S=stream('stars');
+  for(let k=0;k<220;k++){const x=lerp(B[0]-420,B[2]+420,S()),y=lerp(B[1]-520,B[3]+260,S()),r=rand(S,.6,1.8),ph=rand(S,0,TAU);
+    if(x<a.x||x>b.x||y<a.y||y>b.y)continue;
+    if(ROOMS.some(q=>x>q.bounds[0]&&x<q.bounds[2]&&y>q.bounds[1]&&y<q.bounds[3]))continue;
+    pen.dot(x,y,r,'ghost',.25+.35*(.5+.5*Math.sin(t*1.3+ph)))}
+  textCentred(pen,'NATURAL SELECTION CAPITAL',[cx,B[1]-190],68,{w:5,gap:.3,amp:.5});
+  textCentred(pen,'HQ · WHERE A HUNDRED FRUIT-FLY BRAINS TRADE BITCOIN',[cx,B[1]-82],20,{ink:'gold',w:2,tone:.9});
+  if(CAM_MODE==='hero'&&HERO_POS){
+    heroTrail.push([HERO_POS.x,HERO_POS.y]);if(heroTrail.length>28)heroTrail.shift();
+    for(let k=1;k<heroTrail.length;k++)pen.line([heroTrail[k-1],heroTrail[k]],'gold',1.4,{tone:.6*k/heroTrail.length,amp:0});
+    const hp=makePen(pen.ctx,{ox:HERO_POS.x,oy:HERO_POS.y,boil:pen.boil}),h=hero('real');
+    hp.fly(0,0,0,{t,scale:1.7,ink:'gold',pose:'hover',noShadow:true,glowStrength:1.8,facing:HERO_POS.dir,phase:.3});
+    if(h)text(pen,h.id+' · HERO CAM',[HERO_POS.x+22,HERO_POS.y-60],9,{ink:'gold',w:1})}
+}
+
 /* =====================  PLAYBACK  =====================
-   Generations advance on one clock; the camera flies room to room on another, so a short run
-   still tours every room. Scrubbing pauses both. */
-const MS_PER_GEN=1500, MS_PER_ROOM=5200;
-const TOUR=['lab','brain','floor','hero','pile','vault'];
-const NAMES={lab:'the lab',brain:'brain room',floor:'trading floor',hero:"hero's desk",pile:'the pile',vault:'the vault'};
-const VERTICAL=qs.has('vertical');
+   A generation trades, then is judged: SEL runs 0 to 1 over the back half of each generation,
+   while the eliminated fall, the survivors light up and the children hatch. The camera tours
+   shot by shot - a room, then sometimes a push in on its detail - or follows the hero, or
+   pulls back to the whole building. Everything runs on NOW(), so the recorder can step it. */
+const MS_PER_GEN=3600,SEL_FROM=.45,SHOT_MS=4400,HERO_LEG_MS=5200,HERO_ZOOM=2.3;
+const ROOM_ORDER=['lab','brain','floor','pile','nursery','hero','archive','overfit','model','vault'];
+const SHOTS=[{room:'lab'},{room:'lab',focus:[4.9,3.2,1.0],zoom:2.4},{room:'brain'},{room:'floor'},
+  {room:'floor',focus:[5,.2,2.3],zoom:1.9},{room:'pile'},{room:'nursery'},{room:'hero'},
+  {room:'hero',focus:[3.3,4.6,1.3],zoom:2.5},{room:'archive'},{room:'overfit'},{room:'model'},
+  {room:'model',focus:[3.3,4.5,1.7],zoom:2.3},{room:'vault'}];
+const NAMES={lab:'lab',brain:'brain',floor:'floor',pile:'pile',nursery:'nursery',hero:"hero's desk",
+             archive:'archive',overfit:'overfit',model:'model',vault:'vault'};
+const DRIVEN=()=>!!window.__HEDGEFLY_VCLOCK_DRIVEN__;
+let CAM_MODE='tour',genStart=0,shotStart=0,shotIndex=-1,heroStart=0,HERO_POS=null,heroTrail=[];
 const ui={play:document.getElementById('play'),scrub:document.getElementById('scrub'),label:document.getElementById('label'),
           stat:document.getElementById('stat'),rooms:document.getElementById('rooms'),terminal:document.getElementById('terminal'),
-          inset:document.getElementById('inset')};
-let lastGen=0,lastRoom=0,tourAt=0;
+          inset:document.getElementById('inset'),building:document.getElementById('building'),herocam:document.getElementById('herocam')};
 const roomById=id=>ROOMS.find(r=>r.id===id);
-function goToRoom(id,ms=1400){const r=roomById(id);if(!r)return;tourAt=TOUR.indexOf(id);flyTo(framing(r.bounds),ms);
-  for(const b of ui.rooms.children)b.classList.toggle('on',b.dataset.room===id)}
+function light(id){for(const b of ui.rooms.children)b.classList.toggle('on',b.dataset.room===id);
+  ui.building.classList.toggle('on',CAM_MODE==='building');ui.herocam.classList.toggle('on',CAM_MODE==='hero')}
+function shotTarget(s){const r=roomById(s.room),base=framing(r.bounds);if(!s.focus)return base;
+  const [x,y]=iso(r.oi+s.focus[0],r.oj+s.focus[1],s.focus[2]);return {x,y,zoom:clamp(base.zoom*s.zoom,MIN_Z,MAX_Z)}}
+function jump(target,ms){if(ms<=0){Object.assign(cam,target);camBase={...target};tween=null;lastCam=''}else flyTo(target,ms)}
+function goShot(k,ms=2600){CAM_MODE='tour';shotIndex=(k+SHOTS.length)%SHOTS.length;shotStart=NOW();jump(shotTarget(SHOTS[shotIndex]),ms);light(SHOTS[shotIndex].room)}
+function goToRoom(id,ms=1400){const r=roomById(id);if(!r)return;CAM_MODE='free';jump(framing(r.bounds),ms);light(id)}
+function building(ms=2800){CAM_MODE='building';const B=buildingBounds();
+  jump(framing([B[0]-60,B[1]-260,B[2]+60,B[3]+40]),ms);light(null)}
+function heroCam(){CAM_MODE='hero';heroStart=NOW();heroTrail=[];tween=null;light(null)}
+function heroCamTarget(){return CAM_MODE==='hero'&&HERO_POS?{x:HERO_POS.x,y:HERO_POS.y-26,zoom:HERO_ZOOM}:null}
+function anchor(id){const r=roomById(id);const [x,y]=iso(r.oi+r.w/2,r.oj+r.d/2,1.9);return {x,y}}
+function updateHero(now){
+  const el=now-heroStart,n=ROOM_ORDER.length,k=Math.floor(el/HERO_LEG_MS)%n,u=(el%HERO_LEG_MS)/HERO_LEG_MS;
+  const A=anchor(ROOM_ORDER[k]),Bp=anchor(ROOM_ORDER[(k+1)%n]),fly=.6;
+  if(u<fly){const e=ease(u/fly);HERO_POS={x:lerp(A.x,Bp.x,e),y:lerp(A.y,Bp.y,e)-80*Math.sin(Math.PI*e),dir:Bp.x>=A.x?1:-1}}
+  else HERO_POS={x:Bp.x,y:Bp.y+Math.sin(now/300)*4,dir:HERO_POS?HERO_POS.dir:1};
+}
 function paint(){
   if(!RUN)return;const f=F(),real=f.tribes.real,scr=f.tribes.scrambled,bh=RUN.competitor_results.buy_and_hold;
   ui.scrub.value=GEN;ui.label.textContent=`generation ${f.generation} / ${RUN.generations-1}`;
   ui.stat.innerHTML=`<span class="real">real</span> best ${money(real.equity.best)} · median ${money(real.equity.median)} &nbsp;|&nbsp; `+
     `<span class="scr">scrambled</span> best ${money(scr.equity.best)} · median ${money(scr.equity.median)} &nbsp;|&nbsp; `+
-    `buy &amp; hold ${money(bh.final_equity)} &nbsp;|&nbsp; ${eliminatedBefore(GEN).toLocaleString('en-US')} eliminated so far`+
+    `buy &amp; hold ${money(bh.final_equity)} &nbsp;|&nbsp; ${fallen().toLocaleString('en-US')} eliminated so far`+
+    (real.validation?` &nbsp;|&nbsp; validation median real ${money(real.validation.equity.median)} · scrambled ${money(scr.validation.equity.median)}`:'')+
     (RUN.fake?' &nbsp;·&nbsp; FAKE DATA':'');
   ui.play.textContent=PLAYING?'pause':'play';lastCam='';
   const frame=ui.inset.querySelector('iframe');
   if(ui.inset.classList.contains('open')&&frame.contentWindow)frame.contentWindow.postMessage({hedgefly:'gen',gen:GEN},'*');
 }
 function setGeneration(g){if(!RUN)return;GEN=clamp(Math.round(g),0,RUN.generations-1);paint()}
-function tick(now){
+function tickOnce(now){
   if(PLAYING&&RUN){
-    if(now-lastGen>=MS_PER_GEN){lastGen=now;setGeneration(GEN+1>=RUN.generations?0:GEN+1)}
-    if(now-lastRoom>=MS_PER_ROOM&&!tween){lastRoom=now;goToRoom(TOUR[(tourAt+1)%TOUR.length],2600)}
+    if(now-genStart>=MS_PER_GEN){genStart=now;setGeneration(GEN+1>=RUN.generations?0:GEN+1)}
+    const ph=(now-genStart)/MS_PER_GEN;SEL=ph<SEL_FROM?0:clamp((ph-SEL_FROM)/(.95-SEL_FROM),0,1);
+    if(CAM_MODE==='tour'&&now-shotStart>=SHOT_MS&&!tween)goShot(shotIndex+1);
   }
-  requestAnimationFrame(tick);
+  if(CAM_MODE==='hero')updateHero(now);
 }
+function tick(){if(!DRIVEN())requestAnimationFrame(tick);tickOnce(NOW())}
 function openTerminal(on){
   ui.inset.classList.toggle('open',on);ui.terminal.classList.toggle('on',on);
   const frame=ui.inset.querySelector('iframe');
   if(on&&!frame.dataset.loaded){frame.dataset.loaded='1';frame.onload=()=>paint();
-    if(window.__HEDGEFLY_TERMINAL__)                                                     // the standalone file:
-      // built from pieces: a literal comment-open or script tag inside a script block can
-      // confuse the HTML parser about where the block ends
+    if(window.__HEDGEFLY_TERMINAL__)
       frame.srcdoc=window.__HEDGEFLY_TERMINAL__.replace('<'+'!--HEDGEFLY-DATA--'+'>',
         '<'+'script>window.__HEDGEFLY_RUN__='+JSON.stringify(RUN).replace(/</g,'\\u003c')+';<'+'/script>');
     else frame.src='../terminal/index.html?data='+encodeURIComponent(qs.get('data')||'../hq/runs.json')}
 }
 function wireUI(){
-  ui.play.onclick=()=>{PLAYING=!PLAYING;lastGen=lastRoom=performance.now();paint()};
-  ui.scrub.oninput=e=>{PLAYING=false;setGeneration(+e.target.value)};
+  ui.play.onclick=()=>{PLAYING=!PLAYING;genStart=NOW();if(PLAYING&&CAM_MODE==='free')goShot(shotIndex+1);paint()};
+  ui.scrub.oninput=e=>{PLAYING=false;SEL=1;setGeneration(+e.target.value)};
   ui.terminal.onclick=()=>openTerminal(!ui.inset.classList.contains('open'));
-  for(const id of TOUR){const b=document.createElement('button');b.textContent=NAMES[id];b.dataset.room=id;
-    b.onclick=()=>{PLAYING=false;paint();goToRoom(id)};ui.rooms.appendChild(b)}
+  ui.building.onclick=()=>building();
+  ui.herocam.onclick=()=>CAM_MODE==='hero'?goShot(shotIndex+1):heroCam();
+  for(const id of ROOM_ORDER){const b=document.createElement('button');b.textContent=NAMES[id];b.dataset.room=id;
+    b.onclick=()=>goToRoom(id);ui.rooms.appendChild(b)}
   addEventListener('keydown',e=>{
-    if(e.key===' '){PLAYING=!PLAYING;lastGen=lastRoom=performance.now();paint();e.preventDefault()}
-    else if(e.key==='['){PLAYING=false;setGeneration(GEN-1)}
-    else if(e.key===']'){PLAYING=false;setGeneration(GEN+1)}
+    if(e.key===' '){ui.play.onclick();e.preventDefault()}
+    else if(e.key==='['){PLAYING=false;SEL=1;setGeneration(GEN-1)}
+    else if(e.key===']'){PLAYING=false;SEL=1;setGeneration(GEN+1)}
     else if(e.key==='t')openTerminal(!ui.inset.classList.contains('open'));
+    else if(e.key==='b')building();
+    else if(e.key==='h')ui.herocam.onclick();
   });
 }
 async function loadRun(){
-  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;                              // inlined by build_standalone.mjs
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
   const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
   if(!r.ok)throw new Error('runs.json: '+r.status);
   return r.json();
 }
+/* The recorder's handle (scripts/record_hq.mjs): step the clock, pick a shot, set the story. */
+window.__hedgefly={ready:false,
+  step(ms){window.__HEDGEFLY_VCLOCK__=(window.__HEDGEFLY_VCLOCK__||0)+ms;tickOnce(NOW());stepFrame()},
+  shot(kind,arg,ms=0){if(kind==='tour')goShot(arg||0,ms);else if(kind==='room')goToRoom(arg,ms);
+    else if(kind==='focus')goShot(SHOTS.findIndex(s=>s.room===arg&&s.focus),ms);
+    else if(kind==='building')building(ms);else if(kind==='hero')heroCam()},
+  play(on){PLAYING=on;genStart=NOW()},gen(g){setGeneration(g)},sel(s){SEL=s},open(o){OPEN=o},
+  rooms:()=>ROOM_ORDER.slice(),hasFinale:()=>!!(RUN&&RUN.finale),generations:()=>RUN?RUN.generations:0};
 async function boot(){
-  if(VERTICAL)document.body.classList.add('vertical');
+  if(qs.has('vertical'))document.body.classList.add('vertical');
+  if(qs.has('clean')||qs.has('record'))document.body.classList.add('clean');
   try{RUN=await loadRun()}catch(e){console.error(e);ui.stat.textContent='no run data: serve visuals/ over http, or open visuals/dist/hedgefly.html';return}
   if(!(RUN.contract_version>=2)){ui.stat.textContent=`this page reads data contract v2 or later; the file is v${RUN.contract_version||1}`;return}
   ui.scrub.max=RUN.generations-1;
   GEN=clamp(+(qs.get('gen')||0),0,RUN.generations-1);
-  PLAYING=qs.get('play')!=='0'&&!qs.has('still');
+  PLAYING=qs.get('play')!=='0'&&!qs.has('still')&&!qs.has('record');
+  SEL=qs.has('sel')?+qs.get('sel'):(PLAYING?0:1);OPEN=qs.has('open')?+qs.get('open'):1;
   wireUI();paint();start();
-  const first=qs.get('room');if(first)goToRoom(first,0);else if(PLAYING)goToRoom(TOUR[0],0);
+  const first=qs.get('room'),mode=qs.get('cam');
+  if(mode==='building')building(0);else if(mode==='hero')heroCam();
+  else if(first)goToRoom(first,0);else if(PLAYING)goShot(0,0);
   if(qs.has('terminal'))openTerminal(true);
-  lastGen=lastRoom=performance.now();requestAnimationFrame(tick);
+  genStart=NOW();window.__hedgefly.ready=true;
+  if(!DRIVEN())requestAnimationFrame(tick);
 }
 boot();
 </script>
