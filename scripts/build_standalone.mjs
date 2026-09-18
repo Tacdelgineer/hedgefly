@@ -26,7 +26,7 @@ const LS = String.fromCharCode(0x2028), PS = String.fromCharCode(0x2029);   // J
 const inlineString = s => JSON.stringify(s).replace(/</g, '\\u003c').split(LS).join('\\u2028').split(PS).join('\\u2029');
 
 const run = JSON.parse(readFileSync(dataPath, 'utf8'));
-if (run.contract_version !== 2) throw new Error(`${dataPath} is data contract v${run.contract_version || 1}; hq2 reads v2`);
+if (!(run.contract_version >= 2)) throw new Error(`${dataPath} is data contract v${run.contract_version || 1}; hq2 reads v2 or later`);
 
 const LIB = /<!--NEON-RISO-->[\s\S]*?<!--\/NEON-RISO-->/;
 let page = read('visuals/hq2/index.html');

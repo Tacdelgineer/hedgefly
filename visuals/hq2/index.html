@@ -449,7 +449,7 @@ async function loadRun(){
 async function boot(){
   if(VERTICAL)document.body.classList.add('vertical');
   try{RUN=await loadRun()}catch(e){console.error(e);ui.stat.textContent='no run data: serve visuals/ over http, or open visuals/dist/hedgefly.html';return}
-  if(RUN.contract_version!==2){ui.stat.textContent=`this page reads data contract v2; the file is v${RUN.contract_version||1}`;return}
+  if(!(RUN.contract_version>=2)){ui.stat.textContent=`this page reads data contract v2 or later; the file is v${RUN.contract_version||1}`;return}
   ui.scrub.max=RUN.generations-1;
   GEN=clamp(+(qs.get('gen')||0),0,RUN.generations-1);
   PLAYING=qs.get('play')!=='0'&&!qs.has('still');

@@ -107,7 +107,7 @@ async function loadRun(){
   if(!r.ok)throw new Error('runs.json: '+r.status);return r.json();
 }
 loadRun().then(run=>{
-  if(run.contract_version!==2)throw new Error('posters read data contract v2');
+  if(!(run.contract_version>=2))throw new Error('posters read data contract v2 or later');
   const g=Math.max(0,Math.min(run.generations-1,+(qs.get('gen')||run.generations-1)));
   drawCard(run,g);addEventListener('resize',()=>drawCard(run,g));
 }).catch(e=>{console.error(e);document.body.textContent=String(e)});

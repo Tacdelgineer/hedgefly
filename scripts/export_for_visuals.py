@@ -30,7 +30,7 @@ from market import load_evolve
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO / "visuals" / "hq" / "runs.json"
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3        # v3 = v2 + validation, fee-free and finale blocks, all optional
 TRIBES = ("real", "scrambled")
 COMPETITORS = ("momentum", "random", "buy_and_hold")
 BARS_PER_CANDLE = 6         # 288 five-minute bars -> 48 thirty-minute candles a day
@@ -67,10 +67,17 @@ def generations(run_dir: Path) -> list[tuple[Path, Path]]:
 
 
 def seats(log: dict, tribe: str) -> list[dict]:
-    """One entry per fly, in log order."""
-    return [{"equity": round(float(fly["final_equity"]), 2), "eliminated": bool(fly["eliminated"]),
-             "trades_per_day": round(float(fly["trades_per_day"]), 2)}
-            for fly in log["tribes"][tribe]["flies"]]
+    """One entry per fly, in log order. A run with validation days adds each fly's validation
+    equity, so a visual can show a fly that is good on the days it was selected on and poor on
+    the days it never saw."""
+    out = []
+    for fly in log["tribes"][tribe]["flies"]:
+        seat = {"equity": round(float(fly["final_equity"]), 2), "eliminated": bool(fly["eliminated"]),
+                "trades_per_day": round(float(fly["trades_per_day"]), 2)}
+        if "validation_final_equity" in fly:
+            seat["validation_equity"] = round(float(fly["validation_final_equity"]), 2)
+        out.append(seat)
+    return out
 
 
 def tribe_frame(summary: dict, log: dict, tribe: str) -> dict:
@@ -79,7 +86,22 @@ def tribe_frame(summary: dict, log: dict, tribe: str) -> dict:
             "equity": {k: digest["final_equity"][k] for k in ("best", "median", "mean", "worst")},
             "fitness": {k: digest["fitness"][k] for k in ("best", "median")},
             "trades": {k: digest["trades"][k] for k in ("median_per_day", "max_per_day", "total")},
-            "flies": seats(log, tribe)}
+            "flies": seats(log, tribe)} | side_blocks(digest)
+
+
+def side_blocks(digest: dict) -> dict:
+    """The fee-free and validation scores a run logged beside the one selection used."""
+    out = {}
+    if "fee_free" in digest:
+        out["fee_free"] = {"fitness": {k: digest["fee_free"]["fitness"][k] for k in ("best", "median")},
+                           "equity": {k: digest["fee_free"]["final_equity"][k] for k in ("best", "median")}}
+    if "validation" in digest:
+        v = digest["validation"]
+        out["validation"] = {"fitness": {k: v["fitness"][k] for k in ("best", "median", "mean")},
+                             "equity": {k: v["final_equity"][k] for k in ("best", "median")},
+                             "survivors_median_fitness": v["survivors_median_fitness"],
+                             "trades": {"median_per_day": v["trades"]["median_per_day"]}}
+    return out
 
 
 def hero_frame(summary: dict, tribe: str) -> dict:
@@ -87,7 +109,9 @@ def hero_frame(summary: dict, tribe: str) -> dict:
     per_day = next((f["trades_per_day"] for f in summary["tribes"][tribe]["top"] if f["id"] == hero["id"]), 0)
     return {"id": hero["id"], "born": hero["born"], "origin": hero["origin"],
             "generations_lived": hero["generations_lived"], "ancestors": list(hero["ancestors"]),
-            "equity": hero["final_equity"], "fitness": hero["fitness"], "trades_per_day": per_day}
+            "equity": hero["final_equity"], "fitness": hero["fitness"], "trades_per_day": per_day} | (
+            {"validation_fitness": hero["validation_fitness"], "validation_equity": hero["validation_final_equity"]}
+            if "validation_fitness" in hero else {})
 
 
 def frame_of(summary: dict, log: dict) -> dict:
@@ -101,6 +125,48 @@ def window_of(day: dict, evolve: pd.DataFrame | None) -> dict:
     if evolve is not None:
         out["candles"] = candles_for(evolve, day)
     return out
+
+
+FINALE_POINTS = 480          # the finale's equity curves, thinned to this many points each
+
+
+def thin(curve: list[float], points: int = FINALE_POINTS) -> list[float]:
+    step = max(1, len(curve) // points)
+    out = curve[::step]
+    if out[-1] != curve[-1]:
+        out = out + [curve[-1]]
+    return [round(float(v), 2) for v in out]
+
+
+def finale_block(path: Path, rehearsal: bool = False) -> dict | None:
+    """The finale as the visuals need it: every trader's final equity and its equity curve,
+    thinned, in each pass. Reads the merged finale.json, or the flies' half alone if the merge
+    has not happened. The run it came from is recorded, because it need not be the run the rest
+    of the file replays."""
+    tag = "_rehearsal" if rehearsal else ""
+    merged = path / f"finale{tag}.json"
+    half = path / f"finale_flies{tag}.json"
+    source = merged if merged.exists() else half if half.exists() else None
+    if source is None:
+        return None
+    raw = json.loads(source.read_text())
+    passes = {}
+    for label, block in raw["passes"].items():
+        out = {"fee_bps": block["fee_bps"], "bars_between_decisions": block.get("bars_between_decisions", 1),
+               "traders": {}}
+        for tribe, rows in block.get("tribes", {}).items():
+            out["traders"][f"{tribe}_champions"] = {
+                "final_equity": round(float(np.mean(rows["final_equity"])), 2),
+                "each": rows["final_equity"], "trades": rows["trades"], "ids": rows["ids"],
+                "curve": thin(rows["mean_equity"])}
+        for name, row in block.get("competitors", {}).items():
+            out["traders"][name] = {"final_equity": row["final_equity"], "trades": row.get("trades"),
+                                    "curve": thin(row["equity"])}
+        passes[label] = out
+    return {"run": raw["run"], "generation": raw["generation"], "rehearsal": raw.get("rehearsal", False),
+            "data": raw["data"], "bars": raw["bars"], "first_time": raw["first_time"],
+            "last_time": raw["last_time"], "parts": raw.get("parts", ["flies"]),
+            "llm": raw.get("llm"), "passes": passes, "source": source.name}
 
 
 def check(payload: dict) -> None:
@@ -132,6 +198,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--run", type=Path, required=True, help="a run directory under runs/")
     p.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p.add_argument("--finale", type=Path, default=None,
+                   help="a run directory holding finale.json (default: --run's own, if it has one)")
+    p.add_argument("--finale-rehearsal", action="store_true",
+                   help="use the finale's rehearsal files, to build the finale visuals before the real one exists")
     args = p.parse_args()
 
     manifest = json.loads((args.run / "manifest.json").read_text())
@@ -153,6 +223,12 @@ def main() -> None:
                "windows": [window_of(day, evolve) for day in manifest["windows"]],
                "competitor_results": {n: manifest["competitors"][n] for n in COMPETITORS},
                "frames": frames}
+    if manifest.get("validation_windows"):
+        payload["validation_windows"] = [window_of(day, evolve) for day in manifest["validation_windows"]]
+        payload["validation_competitor_results"] = manifest.get("validation_competitors", {})
+    finale = finale_block(args.finale or args.run, args.finale_rehearsal)
+    if finale:
+        payload["finale"] = finale
     check(payload)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -160,6 +236,10 @@ def main() -> None:
     last = frames[-1]
     print(f"{args.out} : {len(frames)} generations, {len(payload['windows'])} fixed days, "
           f"{payload['population']} flies a tribe, {args.out.stat().st_size / 1024:.0f} KB")
+    extras = [k for k in ("validation_windows", "finale") if k in payload]
+    if extras:
+        print(f"with {', '.join(extras)}" + (f" (finale from {payload['finale']['run']}, "
+              f"{payload['finale']['source']})" if "finale" in payload else ""))
     print(f"last generation {last['generation']}: real best ${last['tribes']['real']['equity']['best']:,.2f}, "
           f"scrambled best ${last['tribes']['scrambled']['equity']['best']:,.2f}, "
           f"hero {last['heroes']['real']['id']} with {len(last['heroes']['real']['ancestors'])} ancestors")
