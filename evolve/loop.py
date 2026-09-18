@@ -35,7 +35,7 @@ from nfly import load_malecns
 from brain import Genome, TribeAgent, build_eye, scramble
 from brain.agent import MIN_CALIBRATION_CHARTS, STEPS_PER_CANDLE, VOTE_MEMORY
 from market import (FEE_BPS, MIN_HOLD_BARS, START_CASH, Wallet, load_evolve,
-                    load_split, render_range, trade_window)
+                    load_split, render_range, replay, trade_window)
 from market.chart import WINDOW
 
 from . import logs
@@ -55,6 +55,7 @@ class Config:
     population: int = 100
     bars: int = BARS_PER_WINDOW
     windows: int = FIXED_WINDOWS
+    val_windows: int = 0           # validation days: every fly is scored on them, none is selected on them
     start_cash: float = START_CASH
     fee_bps: float = FEE_BPS
     min_hold_bars: int = MIN_HOLD_BARS
@@ -160,6 +161,31 @@ def draw_fixed_windows(cfg: Config, candles: pd.DataFrame) -> list[tuple[int, in
     return [(first, first + cfg.bars - 1) for first in sorted(picked)]
 
 
+def draw_validation_windows(cfg: Config, candles: pd.DataFrame,
+                            train: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """`cfg.val_windows` more days of the evolve set, drawn once per run from their own seed.
+
+    They are kept a window plus a chart clear of every training day and of each other, so no
+    bar a fly is selected on is ever part of a bar it is validated on. Flies are scored on them
+    every generation and never selected on them: that score is the overfitting gauge."""
+    if not cfg.val_windows:
+        return []
+    rng = np.random.default_rng(cfg.seed + 211)
+    lowest = max(WINDOW - 1, cfg.momentum_lookback - 1)
+    highest = len(candles) - cfg.bars - 1
+    taken = [first for first, _ in train]
+    picked: list[int] = []
+    for _ in range(100_000):
+        if len(picked) == cfg.val_windows:
+            break
+        first = int(rng.integers(lowest, highest))
+        if all(abs(first - other) > cfg.bars + WINDOW for other in taken + picked):
+            picked.append(first)
+    if len(picked) < cfg.val_windows:
+        raise ValueError(f"could not place {cfg.val_windows} validation days clear of the training days")
+    return [(first, first + cfg.bars - 1) for first in sorted(picked)]
+
+
 def window_facts(candles: pd.DataFrame, first: int, last: int) -> dict:
     """What a day was, so a viewer can look it up (rule 8)."""
     opens, closes = candles["open"].to_numpy(), candles["close"].to_numpy()
@@ -195,6 +221,33 @@ def evaluate(tribe: "Tribe", candles: pd.DataFrame, windows: list[tuple[int, int
         actions.append(result.actions); equity.append(result.equity)
     return Evaluation(np.stack(finals), np.stack(trades), np.stack(held), actions, equity,
                       time.perf_counter() - started)
+
+
+def fee_free_finals(ev: Evaluation, candles: pd.DataFrame, windows: list[tuple[int, int]],
+                    cfg: Config) -> np.ndarray:
+    """(K, P) what every fly would have ended each day with at zero fees.
+
+    No brain runs again: the same actions are replayed through a fee-free wallet
+    (market.session.replay), which is exact because no fill depends on the fee. The fills are
+    checked against the real run anyway, so an inexact replay could never be logged quietly."""
+    finals = []
+    for k, (first, last) in enumerate(windows):
+        free = replay(ev.actions[k], candles, first, last,
+                      Wallet(ev.actions[k].shape[1], start_cash=cfg.start_cash, fee_bps=0.0,
+                             min_hold_bars=cfg.min_hold_bars))
+        if not np.array_equal(free.trades, ev.trades[k]):
+            raise RuntimeError(f"the fee-free replay of day {k} filled differently from the real run")
+        finals.append(free.final_equity)
+    return np.stack(finals)
+
+
+def spread(scores: np.ndarray, start_cash: float) -> dict:
+    """Best, median and mean of a set of fitness scores, and the equity each implies."""
+    geo = start_cash * np.exp(scores)
+    return {"fitness": {"best": round(float(scores.max()), logs.FITNESS_PLACES),
+                        "median": round(float(np.median(scores)), logs.FITNESS_PLACES),
+                        "mean": round(float(scores.mean()), logs.FITNESS_PLACES)},
+            "final_equity": {"best": round(float(geo.max()), 2), "median": round(float(np.median(geo)), 2)}}
 
 
 def fly_records(tribe: "Tribe", ev: Evaluation, scores: np.ndarray, survived: np.ndarray,
@@ -247,7 +300,7 @@ def tribe_summary(tribe: "Tribe", records: list[dict], scores: np.ndarray, ev: E
     }
 
 
-def tribe_log(tribe: "Tribe", records: list[dict], ev: Evaluation) -> dict:
+def tribe_log(tribe: "Tribe", records: list[dict], ev: Evaluation, val: Evaluation | None = None) -> dict:
     """Everything about one tribe's generation (rule 7): the visuals replay the logs, never the
     simulation. Curves and actions are per fixed day, in day order."""
     genome = tribe.genome
@@ -256,7 +309,9 @@ def tribe_log(tribe: "Tribe", records: list[dict], ev: Evaluation) -> dict:
             "actions_by_window": [a.T.tolist() for a in ev.actions],                          # K x (P, T)
             "genomes": {name: logs.rounded(getattr(genome, name), logs.GENE_PLACES)
                         for name in ("chart_gain", "position_gain", "readout_w")},
-            "genome_size": int(genome.size())}
+            "genome_size": int(genome.size())} | ({
+               "validation_equity_by_window": [logs.rounded(e, logs.EQUITY_PLACES) for e in val.equity],
+               "validation_actions_by_window": [a.T.tolist() for a in val.actions]} if val else {})
 
 
 def competitors_on(cfg: Config, candles: pd.DataFrame, windows: list[tuple[int, int]]) -> tuple[dict, dict]:
@@ -296,6 +351,11 @@ def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = pri
     days = [window_facts(candles, first, last) for first, last in windows]
     for d in days:
         log(f"fixed day: {d['first_time']} .. {d['last_time']}  {d['price_move_pct']:+.2f}%")
+    val_windows = draw_validation_windows(cfg, candles, windows)
+    val_days = [window_facts(candles, first, last) for first, last in val_windows]
+    for d in val_days:
+        log(f"validation day (scored, never selected on): {d['first_time']} .. {d['last_time']}  "
+            f"{d['price_move_pct']:+.2f}%")
 
     calibration = render_range(candles, WINDOW - 1, WINDOW - 2 + MIN_CALIBRATION_CHARTS)
     tribes, facts = build_tribes(cfg, calibration, log)
@@ -308,19 +368,25 @@ def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = pri
     competitors, competitor_curves = competitors_on(cfg, candles, windows)
     log("competitors on the fixed days: " + ", ".join(
         f"{n} ${c['final_equity']:,.2f}" for n, c in competitors.items()))
+    val_competitors, val_competitor_curves = competitors_on(cfg, candles, val_windows) if val_windows else ({}, {})
+    if val_windows:
+        log("competitors on the validation days: " + ", ".join(
+            f"{n} ${c['final_equity']:,.2f}" for n, c in val_competitors.items()))
 
     run_dir = logs.new_run_dir(run_id)
     started = time.perf_counter()
     logs.write_manifest(run_dir, {"run_id": run_dir.name, "config": cfg.as_dict(), "brain": facts,
                                   "seeding": seeding, "data": split, "windows": days,
                                   "competitors": competitors, "competitor_equity": competitor_curves,
+                                  "validation_windows": val_days, "validation_competitors": val_competitors,
+                                  "validation_competitor_equity": val_competitor_curves,
                                   "genome_size": int(tribes[0].genome.size()),
                                   "started": datetime.now(timezone.utc).isoformat()})
 
     summaries = []
     for generation in range(cfg.generations):
         summaries.append(one_generation(cfg, run_dir, tribes, candles, windows, days, competitors,
-                                        rng, generation, log))
+                                        rng, generation, log, val_windows, val_days, val_competitors))
     elapsed = time.perf_counter() - started
 
     minutes = [s["seconds"] / 60 for s in summaries]
@@ -328,6 +394,7 @@ def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = pri
               "minutes_per_generation": round(float(np.mean(minutes)), 3),
               "minutes_total": round(elapsed / 60, 3), "brain": facts, "seeding": seeding,
               "windows": days, "competitors": competitors,
+              "validation_windows": val_days, "validation_competitors": val_competitors,
               "genome_size": int(tribes[0].genome.size()), "summaries": summaries}
     logs.write_json(run_dir / "run_summary.json", report)
     return report
@@ -335,32 +402,61 @@ def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = pri
 
 def one_generation(cfg: Config, run_dir: Path, tribes: list["Tribe"], candles: pd.DataFrame,
                    windows: list[tuple[int, int]], days: list[dict], competitors: dict,
-                   rng: np.random.Generator, generation: int, log: Callable[[str], None]) -> dict:
+                   rng: np.random.Generator, generation: int, log: Callable[[str], None],
+                   val_windows: list[tuple[int, int]] | None = None, val_days: list[dict] | None = None,
+                   val_competitors: dict | None = None) -> dict:
     started = time.perf_counter()
-    log(f"\ngeneration {generation}: {len(windows)} fixed days")
+    val_windows = val_windows or []
+    log(f"\ngeneration {generation}: {len(windows)} fixed days" +
+        (f" + {len(val_windows)} validation days" if val_windows else ""))
 
     full, digest, scored = {}, {}, {}
     for tribe in tribes:
         ev = evaluate(tribe, candles, windows, cfg)
-        scores = fitness_over_windows(ev.finals, cfg.start_cash)
+        scores = fitness_over_windows(ev.finals, cfg.start_cash)            # the ONLY thing selection sees
         survived = np.zeros(len(scores), bool)
         survived[survivors_of(scores, cfg.survive_share)] = True
+        free = fitness_over_windows(fee_free_finals(ev, candles, windows, cfg), cfg.start_cash)
+        val = evaluate(tribe, candles, val_windows, cfg) if val_windows else None
+        if val:
+            val_scores = fitness_over_windows(val.finals, cfg.start_cash)
+            val_free = fitness_over_windows(fee_free_finals(val, candles, val_windows, cfg), cfg.start_cash)
         records = fly_records(tribe, ev, scores, survived, cfg, generation)
-        full[tribe.name] = tribe_log(tribe, records, ev)
-        digest[tribe.name] = tribe_summary(tribe, records, scores, ev, cfg, generation)
+        for i, r in enumerate(records):
+            r["fitness_fee_free"] = round(float(free[i]), logs.FITNESS_PLACES)
+            if val:
+                r["validation_fitness"] = round(float(val_scores[i]), logs.FITNESS_PLACES)
+                r["validation_final_equity"] = round(float(cfg.start_cash * np.exp(val_scores[i])), 2)
+                r["validation_final_equity_by_window"] = [round(float(e), 2) for e in val.finals[:, i]]
+                r["validation_fitness_fee_free"] = round(float(val_free[i]), logs.FITNESS_PLACES)
+        full[tribe.name] = tribe_log(tribe, records, ev, val)
+        d = digest[tribe.name] = tribe_summary(tribe, records, scores, ev, cfg, generation)
+        d["fee_free"] = spread(free, cfg.start_cash)
+        hero_row = int(np.argsort(-scores, kind="stable")[0])
+        if val:
+            kept = survivors_of(scores, cfg.survive_share)
+            d["validation"] = spread(val_scores, cfg.start_cash) | {
+                "survivors_median_fitness": round(float(np.median(val_scores[kept])), logs.FITNESS_PLACES),
+                "trades": {"median_per_day": round(float(np.median(val.trades.mean(axis=0))), 2)},
+                "fee_free": spread(val_free, cfg.start_cash), "seconds": round(val.seconds, 2)}
+            d["hero_lineage"]["validation_fitness"] = round(float(val_scores[hero_row]), logs.FITNESS_PLACES)
+            d["hero_lineage"]["validation_final_equity"] = round(float(cfg.start_cash * np.exp(val_scores[hero_row])), 2)
         scored[tribe.name] = scores
-        d = digest[tribe.name]
         log(f"  {tribe.name:>9}: best ${d['final_equity']['best']:,.2f} "
             f"median ${d['final_equity']['median']:,.2f} | fitness {d['fitness']['best']:+.5f} "
-            f"| {d['eliminated']} eliminated | {d['trades']['median_per_day']:g} trades/day (median) "
-            f"| {ev.seconds:.0f} s")
+            f"| fee-free median {d['fee_free']['fitness']['median']:+.5f}"
+            + (f" | VALIDATION median {d['validation']['fitness']['median']:+.5f} "
+               f"hero {d['hero_lineage']['validation_fitness']:+.5f}" if val else "")
+            + f" | {d['trades']['median_per_day']:g} trades/day | {ev.seconds + (val.seconds if val else 0):.0f} s")
 
     seconds = time.perf_counter() - started
     logs.write_generation(run_dir, generation, {
         "run_id": run_dir.name, "generation": generation, "seconds": round(seconds, 2),
-        "windows": days, "config": cfg.as_dict(), "tribes": full, "competitors": competitors})
+        "windows": days, "config": cfg.as_dict(), "tribes": full, "competitors": competitors,
+        "validation_windows": val_days or [], "validation_competitors": val_competitors or {}})
     summary = {"run_id": run_dir.name, "generation": generation, "seconds": round(seconds, 2),
-               "windows": days, "tribes": digest, "competitors": competitors}
+               "windows": days, "tribes": digest, "competitors": competitors,
+               "validation_windows": val_days or [], "validation_competitors": val_competitors or {}}
     logs.write_summary(run_dir, generation, summary)
 
     for tribe in tribes:

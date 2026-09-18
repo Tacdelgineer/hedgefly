@@ -46,3 +46,27 @@ def trade_window(decide: Decide, candles: pd.DataFrame, first: int, last: int, w
         wallet.fill(actions[i], opens[t + 1])
         equity[i] = wallet.settle(closes[t + 1])
     return WindowResult(actions, equity, wallet.trades.copy(), wallet.broke.copy())
+
+
+def replay(actions: np.ndarray, candles: pd.DataFrame, first: int, last: int, wallet: Wallet) -> WindowResult:
+    """Re-trade a window from actions already decided, in exactly trade_window's order.
+
+    This is how a fee-free score is had without running a brain or a model again. A decision
+    depends on the chart and on the position; a position depends only on which fills happened;
+    and whether a fill happens never depends on the fee - a BUY spends all the cash whatever it
+    is, and there is no bankruptcy line (market.wallet). So the same actions, replayed through
+    a wallet with different fees, are exactly the run that wallet would have produced.
+    `actions` is (T, P) or (T,) for a single trader."""
+    actions = np.asarray(actions)
+    if actions.ndim == 1:
+        actions = actions[:, None]
+    if len(actions) != last - first + 1:
+        raise ValueError(f"{len(actions)} decisions for {last - first + 1} bars")
+    if last + 1 >= len(candles):
+        raise ValueError("the decision on the last candle is filled at the next candle's open, which must exist")
+    opens, closes = candles["open"].to_numpy(), candles["close"].to_numpy()
+    equity = np.empty((len(actions), wallet.population))
+    for i, t in enumerate(range(first, last + 1)):
+        wallet.fill(actions[i], opens[t + 1])
+        equity[i] = wallet.settle(closes[t + 1])
+    return WindowResult(actions.astype(np.int8), equity, wallet.trades.copy(), wallet.broke.copy())
