@@ -688,6 +688,7 @@ async function boot(){
   if(mode==='building')building(0);else if(mode==='hero')heroCam();
   else if(first)goToRoom(first,0);else if(PLAYING)goShot(0,0);
   if(qs.has('terminal'))openTerminal(true);
+  if(qs.has('record'))idleSince=-1e9;              // a recording drifts from its first frame
   genStart=NOW();window.__hedgefly.ready=true;
   if(!DRIVEN())requestAnimationFrame(tick);
 }
