@@ -55,7 +55,6 @@ const TRIBE_COLOR = {real:C.real, scrambled:C.scrambled};
 const qs = new URLSearchParams(location.search);
 const VERTICAL = qs.has('vertical');
 const MS_PER_GEN = 1100;
-const CANDLES = 90;               // bars drawn per generation window
 const PILE_MAX = 1200;            // drawn dead flies; the count keeps rising past this
 const TRAIL = 40;
 
@@ -77,31 +76,12 @@ const frame=()=>RUN.frames[clamp(GEN,0,RUN.frames.length-1)];
 const heroOf=tribe=>frame().heroes[tribe];
 
 /* ---------- candles ----------------------------------------------------------
-   The contract (visuals/hq/data-contract.md) carries the window's start, end and net move,
-   deliberately not its 288 bars. If a future export adds `window.candles`, this draws the
-   real ones. Until then it reconstructs a shape from the generation's seed and rescales it so
-   the close-to-close move is exactly the logged price_move_pct - the SHAPE is invented, the
-   MOVE is the real number, and the pane says so on screen.                                  */
-const candleCache = new Map();
+   The real bars the generation traded, as [open, high, low, close], from the exporter
+   (visuals/hq/data-contract.md). No candles in the file means no candles on screen: this
+   never invents a shape.                                                                  */
 function candlesFor(f){
-  if(f.window.candles) return {bars:f.window.candles, real:true};
-  if(candleCache.has(f.generation)) return candleCache.get(f.generation);
-  const R = seeded(f.generation), n = CANDLES, closes=[0];
-  for(let i=1;i<n;i++) closes.push(closes[i-1] + (R()*2-1) + (R()*2-1)*0.6);
-  const drift = closes[n-1];
-  const target = f.window.price_move_pct/100;
-  const bars=[];
-  for(let i=0;i<n;i++){
-    // straighten the walk, then tilt it so the net move is the logged one
-    const shaped = (closes[i] - drift*i/(n-1)) * 0.0022 + target*i/(n-1);
-    const prev = i ? bars[i-1].c : 1;
-    const c = 1 + shaped, o = i ? prev : 1 + target*0.02;
-    const wick = (0.0006 + R()*0.0016);
-    bars.push({o, c, h:Math.max(o,c)+wick, l:Math.min(o,c)-wick});
-  }
-  const out={bars, real:false};
-  candleCache.set(f.generation, out);
-  return out;
+  const raw=f.window.candles;
+  return raw&&raw.length ? raw.map(([o,h,l,c])=>({o,h,l,c})) : null;
 }
 
 /* ---------- layout: one grid, two arrangements, never two implementations ---------- */
@@ -168,7 +148,8 @@ function chartLayer(r,f){
   cc.width=Math.max(1,Math.round(r.w*dpr)); cc.height=Math.max(1,Math.round(r.h*dpr));
   const g=cc.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);
   g.clearRect(0,0,r.w,r.h);
-  const {bars}=candlesFor(f);
+  const bars=candlesFor(f);
+  if(!bars){ chartCanvas=cc; chartKey=key; return cc; }      // nothing to draw, nothing drawn
   const lo=Math.min(...bars.map(b=>b.l)), hi=Math.max(...bars.map(b=>b.h));
   const span=Math.max(hi-lo,1e-9), top=26, bot=r.h-18;
   const y=v=>bot-(v-lo)/span*(bot-top);
@@ -421,9 +402,9 @@ function drawHead(r,f){
   label(f.window.first_time.slice(0,16).replace('T',' '), r.x+gw+70, r.y+14, {color:C.dim, size:10});
   label(`${move>=0?'+':''}${move.toFixed(2)}% this window`, r.x+gw+70, r.y+27,
         {color:move>=0?C.real:C.scrambled, size:10});
-  const {real}=candlesFor(f);
-  label(real?'btc-usd 5m':'btc-usd 5m · shape reconstructed, move from the log',
-        r.x+r.w, r.y+27, {color:C.dim, size:9, align:'right'});
+  const bars=candlesFor(f);
+  label(bars?`btc-usd · ${RUN.candle_minutes||15}m candles`:'no candles in this export',
+        r.x+r.w, r.y+27, {color:bars?C.dim:C.locked, size:9, align:'right'});
 }
 
 /* ---------- scanlines and the sweep, once, over the finished frame ---------- */

@@ -86,3 +86,35 @@ def test_a_generation_without_its_full_log_is_skipped(tmp_path):
 def test_seats_are_rounded_to_cents():
     rows = seats({"tribes": {"real": {"flies": [{"final_equity": 1000.12345, "broke": False, "trades": 1}]}}}, "real")
     assert rows == [{"equity": 1000.12, "broke": False, "trades": 1}]
+
+
+def evolve_bars(n=12):
+    """Six known bars twice over: opens 100, 101, ..., each bar 2 wide."""
+    import pandas as pd
+    opens = [100.0 + i for i in range(n)]
+    return pd.DataFrame({"timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+                         "open": opens, "high": [o + 2 for o in opens], "low": [o - 1 for o in opens],
+                         "close": [o + 0.5 for o in opens], "volume": 1.0})
+
+
+def test_candles_are_the_real_bars_grouped_in_threes():
+    from scripts.export_for_visuals import candles_for
+    bars = candles_for(evolve_bars(), {"first_index": 0, "last_index": 5, "entry_price": 101.0})
+    assert len(bars) == 2
+    assert bars[0] == [100.0, 104.0, 99.0, 102.5]      # open of bar 0, highest high, lowest low, close of bar 2
+    assert bars[1] == [103.0, 107.0, 102.0, 105.5]
+
+
+def test_a_data_file_whose_rows_have_shifted_is_refused():
+    """If the evolve set is re-fetched and its rows move, the logged indices point at another
+    day. The entry price the run logged catches it before a wrong chart is drawn."""
+    from scripts.export_for_visuals import candles_for
+    with pytest.raises(SystemExit, match="not the one this run traded"):
+        candles_for(evolve_bars(), {"first_index": 0, "last_index": 5, "entry_price": 250.0})
+
+
+def test_a_candle_that_does_not_contain_its_own_body_is_caught():
+    f = frame_of(summary(), log())
+    f["window"]["candles"] = [[100.0, 99.0, 98.0, 100.5]]    # high below the close
+    with pytest.raises(SystemExit, match="do not contain"):
+        check({"population": POPULATION, "frames": [f]})

@@ -16,6 +16,7 @@ finishes, comes from `visuals/hq/fake_runs.py`.
 | `population` | int | flies per tribe, per generation |
 | `bars_per_generation` | int | decision bars in a generation's window |
 | `bar_minutes` | int | minutes per bar (5) |
+| `candle_minutes` | int | minutes per candle in `window.candles` (15: three bars each) |
 | `start_cash` | number | every trader's opening bankroll (1000) |
 | `broke_below` | number | the equity a fly dies at (500) |
 | `fee_bps` | number | fee per side, basis points |
@@ -32,7 +33,8 @@ finishes, comes from `visuals/hq/fake_runs.py`.
   "generation": 0,
   "window": {"first_time": "2024-12-01T22:20:00+00:00",
              "last_time": "2024-12-02T22:20:00+00:00",
-             "price_move_pct": -1.4},
+             "price_move_pct": -1.4,
+             "candles": [[95718.24, 95790.0, 95601.5, 95655.1], "... 96 of them ..."]},
   "tribes": {
     "real": {
       "alive": 97, "broke": 3,
@@ -72,10 +74,18 @@ finishes, comes from `visuals/hq/fake_runs.py`.
   generation; `id` says who is being watched.
 - Times are ISO 8601 with an offset. `price_move_pct` is a percentage, already multiplied by
   100, signed.
+- `window.candles` are the real BTC-USD bars that generation traded, `[open, high, low, close]`
+  in dollars, oldest first, each one `candle_minutes` wide: the window's 288 five-minute
+  decision bars grouped in threes, so 96 candles. They come from the evolve set at the row
+  indices the run logged, and the exporter refuses to write them unless the bar after the first
+  opens at the entry price the run logged - a data file whose rows have shifted cannot chart the
+  wrong day. Every candle's high and low contain its open and close. A visual that has no
+  candles draws none; it never invents a shape.
 
 ### What is deliberately not here
 
-Equity curves within a generation, genomes, per-bar actions and connectome data. They are in
-`runs/<run_id>/gen_XXX.json` and they are large; the HQ animates generation by generation, so
-per-bar detail would be a hundred megabytes it never draws. Add them to the contract before
+Equity curves within a generation, genomes, per-bar actions and connectome data, and
+five-minute prices (the candles are fifteen-minute). They are in `runs/<run_id>/gen_XXX.json`
+and the evolve set, and they are large; the HQ animates generation by generation, so per-bar
+detail would be a hundred megabytes it never draws. Add them to the contract before
 adding a room that needs them.

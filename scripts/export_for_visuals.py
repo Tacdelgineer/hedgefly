@@ -8,6 +8,12 @@ they show comes out of those logs (rule 8). This is the only bridge between the 
 `gen_XXX_summary.json` for the tribe figures and `gen_XXX.json` for the per-fly seats the
 Trading Floor lights up, and writes one compact JSON the browser can hold in memory.
 
+The candlesticks are the real bars each generation traded: the summary logs the window's
+first and last bar index, and the evolve set is read at exactly those rows, downsampled to
+15-minute candles. Before trusting the indices it checks that the bar after the first one
+opens at the entry price the run logged, so a re-fetched data file whose rows have shifted is
+caught here instead of charting the wrong day.
+
 It never opens the locked test set; the finale writes its own file.
 """
 
@@ -18,10 +24,34 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
+from market import load_evolve
+
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO / "visuals" / "hq" / "runs.json"
 TRIBES = ("real", "scrambled")
 COMPETITORS = ("momentum", "random", "buy_and_hold")
+BARS_PER_CANDLE = 3         # 288 five-minute bars -> 96 fifteen-minute candles
+PRICE_TOLERANCE = 0.01      # dollars: the logged entry price is rounded to cents
+
+
+def candles_for(evolve: pd.DataFrame, window: dict, per: int = BARS_PER_CANDLE) -> list[list[float]]:
+    """The window's decision bars as [open, high, low, close] candles of `per` bars each.
+
+    Checks the indices against the price the run logged first: the bar after the window's first
+    one is where the flies' first trade filled, so its open must be the logged entry price."""
+    first, last = int(window["first_index"]), int(window["last_index"])
+    filled = float(evolve["open"].iloc[first + 1])
+    if abs(filled - float(window["entry_price"])) > PRICE_TOLERANCE:
+        raise SystemExit(f"bar {first + 1} opens at {filled}, but the run logged an entry price of "
+                         f"{window['entry_price']}: the evolve file is not the one this run traded")
+    bars = evolve.iloc[first:last + 1]
+    group = np.arange(len(bars)) // per
+    agg = bars.groupby(group).agg(o=("open", "first"), h=("high", "max"), l=("low", "min"), c=("close", "last"))
+    return [[round(float(r.o), 2), round(float(r.h), 2), round(float(r.l), 2), round(float(r.c), 2)]
+            for r in agg.itertuples()]
 
 
 def generations(run_dir: Path) -> list[tuple[Path, Path]]:
@@ -61,9 +91,12 @@ def hero_frame(summary: dict, tribe: str) -> dict:
                             if f["id"] == hero["id"]), 0)}
 
 
-def frame_of(summary: dict, log: dict) -> dict:
+def frame_of(summary: dict, log: dict, evolve: pd.DataFrame | None = None) -> dict:
+    window = {k: summary["window"][k] for k in ("first_time", "last_time", "price_move_pct")}
+    if evolve is not None:
+        window["candles"] = candles_for(evolve, summary["window"])
     return {"generation": summary["generation"],
-            "window": {k: summary["window"][k] for k in ("first_time", "last_time", "price_move_pct")},
+            "window": window,
             "tribes": {t: tribe_frame(summary, log, t) for t in TRIBES},
             "competitors": {name: summary["competitors"][name]["final_equity"]
                             for name in COMPETITORS if name in summary["competitors"]},
@@ -86,6 +119,10 @@ def check(payload: dict) -> None:
             hero = frame["heroes"][tribe]
             if hero["id"] in hero["ancestors"]:
                 raise SystemExit(f"{where}: {hero['id']} is its own ancestor")
+        for o, h, l, c in frame["window"].get("candles", []):
+            if not (h >= max(o, c) and l <= min(o, c)):
+                raise SystemExit(f"generation {frame['generation']}: a candle whose high and low "
+                                 f"do not contain its open and close ({o}, {h}, {l}, {c})")
 
 
 def main() -> None:
@@ -96,14 +133,16 @@ def main() -> None:
 
     manifest = json.loads((args.run / "manifest.json").read_text())
     config = manifest["config"]
+    evolve = load_evolve()
     frames = []
     for summary_path, log_path in generations(args.run):
-        frames.append(frame_of(json.loads(summary_path.read_text()), json.loads(log_path.read_text())))
+        frames.append(frame_of(json.loads(summary_path.read_text()), json.loads(log_path.read_text()), evolve))
 
     payload = {"run_id": manifest["run_id"], "generated": datetime.now(timezone.utc).isoformat(),
                "generations": len(frames), "population": config["population"],
                "bars_per_generation": config["bars"],
                "bar_minutes": manifest["data"]["granularity_seconds"] // 60,
+               "candle_minutes": manifest["data"]["granularity_seconds"] // 60 * BARS_PER_CANDLE,
                "start_cash": config["start_cash"], "broke_below": 500.0,
                "fee_bps": config["fee_bps"], "min_hold_bars": config["min_hold_bars"],
                "tribes": list(TRIBES), "competitors": list(COMPETITORS), "frames": frames}

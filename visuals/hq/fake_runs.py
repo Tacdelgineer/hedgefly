@@ -1,21 +1,26 @@
 """A believable fake runs.json, so the HQ can be built before a real run finishes.
 
-    uv run python visuals/hq/fake_runs.py
+    uv run python -m visuals.hq.fake_runs
 
 Shapes and ranges follow visuals/hq/data-contract.md and the real day-3 and day-4 runs: 100
 flies a tribe, most of them finishing within a few percent of $1,000, a real tribe that pulls
 ahead slowly, competitors that mostly lose, and a hero lineage whose chain grows as founders
-are replaced by their children. Nothing here is a measurement - the file says so, and
-`scripts/export_for_visuals.py` writes the real thing.
+are replaced by their children. The FLIES are invented - the file says so, and
+`scripts/export_for_visuals.py` writes the real thing - but the market is not: each generation
+is a real day of the evolve set, with its real candles and its real move.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+
+from market import load_evolve
+from market.chart import WINDOW
+from scripts.export_for_visuals import BARS_PER_CANDLE, candles_for
 
 HERE = Path(__file__).resolve().parent
 GENERATIONS, POPULATION = 40, 100
@@ -40,18 +45,23 @@ def fly_equities(rng: np.random.Generator, centre: float, population: int, ruin:
 
 def main() -> None:
     rng = np.random.default_rng(7)
-    start = datetime(2024, 3, 1, tzinfo=timezone.utc)
+    evolve = load_evolve()
+    closes, opens = evolve["close"].to_numpy(), evolve["open"].to_numpy()
     lineage = {t: {"id": f"{t}-f{rng.integers(0, 100):05d}", "born": 0, "origin": "founder",
                    "ancestors": [], "minted": 100} for t in TRIBES}
     frames = []
 
     for generation in range(GENERATIONS):
-        window = start + timedelta(days=int(rng.integers(0, 900)))
-        move = float(np.round(rng.normal(0, 1.1), 2))
+        first = int(rng.integers(WINDOW - 1, len(evolve) - 288 - 2))
+        last = first + 287
+        entry, exit_ = float(opens[first + 1]), float(closes[last + 1])
+        move = round(100 * (exit_ / entry - 1), 4)
+        real_window = {"first_index": first, "last_index": last, "entry_price": round(entry, 2)}
         frame = {"generation": generation,
-                 "window": {"first_time": window.isoformat(),
-                            "last_time": (window + timedelta(days=1)).isoformat(),
-                            "price_move_pct": move},
+                 "window": {"first_time": evolve["timestamp"].iloc[first].isoformat(),
+                            "last_time": evolve["timestamp"].iloc[last + 1].isoformat(),
+                            "price_move_pct": move,
+                            "candles": candles_for(evolve, real_window)},
                  "tribes": {}, "competitors": {}, "heroes": {}}
 
         for tribe in TRIBES:
@@ -93,7 +103,8 @@ def main() -> None:
 
     out = {"run_id": "fake", "generated": datetime.now(timezone.utc).isoformat(),
            "fake": True, "generations": GENERATIONS, "population": POPULATION,
-           "bars_per_generation": 288, "bar_minutes": 5, "start_cash": START_CASH,
+           "bars_per_generation": 288, "bar_minutes": 5, "candle_minutes": 5 * BARS_PER_CANDLE,
+           "start_cash": START_CASH,
            "broke_below": BROKE_BELOW, "fee_bps": 5.0, "min_hold_bars": 3,
            "tribes": list(TRIBES), "competitors": list(COMPETITORS), "frames": frames}
     path = HERE / "runs.json"
