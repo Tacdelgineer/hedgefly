@@ -97,6 +97,7 @@ class LLMRun:
     equity: np.ndarray
     decisions: int
     unparsed: int
+    actions: np.ndarray | None = None     # (T,) every action it took, for an exact fee-free replay
 
     def summary(self, start_cash: float) -> dict:
         return {"final_equity": round(self.final_equity, 2),
@@ -169,4 +170,5 @@ class LLMTrader:
         purse = Wallet(1, **wallet)
         result = trade_window(decide, candles, first, last, purse)
         return LLMRun("llm", float(result.final_equity[0]), int(result.trades[0]),
-                      bool(result.broke[0]), result.equity[:, 0], state["decisions"], state["unparsed"])
+                      bool(result.broke[0]), result.equity[:, 0], state["decisions"], state["unparsed"],
+                      result.actions[:, 0].copy())

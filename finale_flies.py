@@ -11,6 +11,11 @@ random and buy-and-hold, over the whole locked test set. Three passes:
   no_fees            every bar, fees at zero, so the cost of trading can be shown
   hourly_with_fees   the champions only, acting once an hour, real fees - the language model
                      is only ever asked hourly, and this is the flies under that same limit
+  hourly_no_fees     the same, fees at zero
+
+The brains run twice (every bar, hourly). The two fee-free passes are the same decisions
+replayed through a fee-free wallet, which is exact - no fill depends on the fee - and is
+checked fly by fly against the run it came from (market.session.replay).
 
 The minimum hold stays on in every pass: it is a rule, not a fee. In the hourly pass the
 brains still see every bar; only their decision on the hour is acted on.
@@ -34,11 +39,21 @@ import numpy as np
 
 from evolve.competitors import MOMENTUM_LOOKBACK, run_competitors
 from evolve.logs import EQUITY_PLACES, rounded
-from finale_shared import (HOURLY, HOURLY_PASS, PASSES, TRIBES, build_agents, calibration_charts,
+from finale_shared import (HOURLY, HOURLY_FREE_PASS, HOURLY_PASS, TRIBES, build_agents, calibration_charts,
                            champions_of, check_run, common_args, describe, last_generation,
-                           require_gpu, trade_champions, window_of, write_part)
+                           replay_champions, require_gpu, trade_champions, window_of, write_part)
 from market import START_CASH, load_evolve
 from market.data import load_locked          # rule 3: this import belongs to the finale scripts
+
+
+def add_competitors(out: dict, candles, first: int, last: int, fee_bps: float, args) -> None:
+    """Momentum, random and buy-and-hold under the same rules. Their decisions are scripts that
+    never depend on a fee, so they simply run again under each fee regime."""
+    rules = {"fee_bps": fee_bps, "min_hold_bars": args.min_hold_bars, "start_cash": START_CASH}
+    for name, run in run_competitors(candles, first, last, seed=args.seed,
+                                     lookback=args.momentum_lookback, **rules).items():
+        out["competitors"][name] = {**run.summary(START_CASH), "equity": rounded(run.equity, EQUITY_PLACES)}
+        print(f"  {name:>9}: ${run.final_equity:,.2f}", flush=True)
 
 
 def main() -> None:
@@ -70,39 +85,38 @@ def main() -> None:
     agents = build_agents(calibration, args.device, "data", args.scramble_seed)
 
     passes = {}
-    for label, forced in PASSES:
-        fee = args.fee_bps if forced is None else forced
-        print(f"\n{label} ({fee} bps a side):", flush=True)
+    cadences = [("with_fees", "no_fees", 1)] + ([(HOURLY_PASS, HOURLY_FREE_PASS, HOURLY)] if args.hourly else [])
+    for label, free_label, every in cadences:
+        print(f"\n{label} ({args.fee_bps} bps a side, acting every {every} bar{'s' if every > 1 else ''}):", flush=True)
         started = time.perf_counter()
-        out = {"fee_bps": fee, "min_hold_bars": args.min_hold_bars, "tribes": {}, "competitors": {}}
+        out = {"fee_bps": args.fee_bps, "min_hold_bars": args.min_hold_bars, "bars_between_decisions": every,
+               "tribes": {}, "competitors": {}}
+        acted = {}
         for name in TRIBES:
             t0 = time.perf_counter()
-            out["tribes"][name] = trade_champions(agents[name], champions[name], candles, first, last,
-                                                  fee, args.min_hold_bars)
+            out["tribes"][name], acted[name] = trade_champions(agents[name], champions[name], candles, first, last,
+                                                               args.fee_bps, args.min_hold_bars, every=every)
             print(f"  {name:>9} champions: mean ${np.mean(out['tribes'][name]['final_equity']):,.2f} "
                   f"({time.perf_counter() - t0:.0f} s)", flush=True)
-        rules = {"fee_bps": fee, "min_hold_bars": args.min_hold_bars, "start_cash": START_CASH}
-        for name, run in run_competitors(candles, first, last, seed=args.seed,
-                                         lookback=args.momentum_lookback, **rules).items():
-            out["competitors"][name] = {**run.summary(START_CASH), "equity": rounded(run.equity, EQUITY_PLACES)}
-            print(f"  {name:>9}: ${run.final_equity:,.2f}", flush=True)
+        if every == 1:
+            add_competitors(out, candles, first, last, args.fee_bps, args)
         out["seconds"] = round(time.perf_counter() - started, 1)
-        out["bars_between_decisions"] = 1
         passes[label] = out
 
-    if args.hourly:
-        print(f"\n{HOURLY_PASS} ({args.fee_bps} bps a side, acting every {HOURLY} bars):", flush=True)
+        # The fee-free twin: the same decisions replayed through a fee-free wallet. Exact, because
+        # no fill depends on the fee, and it costs seconds instead of another pass of the brains.
+        print(f"{free_label} (0 bps, replayed from {label}):", flush=True)
         started = time.perf_counter()
-        out = {"fee_bps": args.fee_bps, "min_hold_bars": args.min_hold_bars,
-               "bars_between_decisions": HOURLY, "tribes": {}, "competitors": {}}
+        free = {"fee_bps": 0.0, "min_hold_bars": args.min_hold_bars, "bars_between_decisions": every,
+                "replayed_from": label, "tribes": {}, "competitors": {}}
         for name in TRIBES:
-            t0 = time.perf_counter()
-            out["tribes"][name] = trade_champions(agents[name], champions[name], candles, first, last,
-                                                  args.fee_bps, args.min_hold_bars, every=HOURLY)
-            print(f"  {name:>9} champions, hourly: mean ${np.mean(out['tribes'][name]['final_equity']):,.2f} "
-                  f"({time.perf_counter() - t0:.0f} s)", flush=True)
-        out["seconds"] = round(time.perf_counter() - started, 1)
-        passes[HOURLY_PASS] = out
+            free["tribes"][name] = replay_champions(champions[name], acted[name], candles, first, last, 0.0,
+                                                    args.min_hold_bars, out["tribes"][name]["trades"])
+            print(f"  {name:>9} champions: mean ${np.mean(free['tribes'][name]['final_equity']):,.2f}", flush=True)
+        if every == 1:
+            add_competitors(free, candles, first, last, 0.0, args)
+        free["seconds"] = round(time.perf_counter() - started, 1)
+        passes[free_label] = free
 
     payload = {"part": "flies", "run": args.run.name, "generation": generation,
                "rehearsal": bool(args.rehearse), "champions_per_tribe": args.top,
