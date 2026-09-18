@@ -119,6 +119,14 @@ Deadline: published within 7 days.
     On fixed days a genome's score is its own, and a survivor scores the same next generation.
   - The price of fixed days is overfitting: a genome can learn four days rather than markets.
     Improvement on them is not evidence of skill; the finale's six locked months are.
+- **Validation days** (`--val-windows 2`): two more days of the evolve set, drawn once per run
+  and kept clear of the training days' bars and charts. Every fly is scored on them every
+  generation and none is ever selected on them; the gap between training and validation is the
+  overfitting gauge, logged per fly and per tribe.
+- **Fee-free scores** are logged for every fly, on training and validation days, without running
+  a brain again: the same actions replayed through a fee-free wallet (`market.session.replay`),
+  which is exact because no fill depends on the fee. Every replay's fills are checked against
+  the real run.
 - **Starting genomes that emit only one action are rejected** and redrawn: a fly that HOLDs
   (or buys) all window carries no information for selection to work on. The share of random
   genomes that use two or more actions is measured and reported; the chart and vote settings
@@ -150,7 +158,11 @@ Deadline: published within 7 days.
 - A THIRD pass for the champions alone, acting once an hour at the real fees, so they can be
   charted against the language model under the same limit: flies every bar, flies hourly, the
   model hourly, on identical bars. The brains still see every bar in the hourly pass; only
-  their decision on the hour is acted on. It costs a full five-minute pass.
+  their decision on the hour is acted on. It costs a full five-minute pass. It too has a
+  fee-free twin.
+- Every fee-free pass - flies and model alike - reuses the decisions of its with-fees pass,
+  replayed through a fee-free wallet. Exact, checked fill by fill, and it saves two brain passes
+  and half the model's calls.
 - Runs against the champions: Momentum, Random, Buy-and-hold, and a local Qwen3.8-27B given
   the same 64 bars described in words, on the same 0-100 window scale, obeying the same
   rules. The model is asked every `--llm-every` bars (hourly by default) and holds in
@@ -160,6 +172,16 @@ Deadline: published within 7 days.
   champions and every competitor, in both fee regimes.
 - Run once, on camera. Whatever happens is the ending. `--rehearse N` trades the last N bars
   of the EVOLVE set instead, so the rig can be tested without anyone seeing the ending.
+
+---
+
+## RUNNING UNATTENDED
+
+`scripts/queue.sh <jobs-file>` runs jobs one after another, each with its own log, and appends
+job name, exit code and finish time to a status file after each. It stops at the first failure,
+resumes past jobs that already succeeded, never starts a GPU job while another GPU job of this
+project is running or the GPU is busy, and stops gracefully if a STOP file appears.
+`queue/day7.jobs` is the first such queue.
 
 ---
 

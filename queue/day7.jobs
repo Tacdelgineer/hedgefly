@@ -1,0 +1,18 @@
+# The unattended queue for day 7: run with  nohup setsid scripts/queue.sh queue/day7.jobs &
+# Format: <name> <gpu|cpu> <command...>, run in order from the repo root; see scripts/queue.sh.
+# Status: runs/queue/day7/status.tsv   Logs: runs/queue/day7/logs/<name>.log
+
+# a. The finale's flies: the champions of day6_full (its last generation) over the locked six
+#    months, acting every bar and acting hourly; each with fees, then replayed without them.
+finale_flies gpu uv run python -u finale_flies.py --run runs/day6_full
+
+# b. The finale's model: qwen3.6:35b-a3b, asked hourly with fees; the fee-free pass replays its
+#    decisions. Afterwards the model is unloaded from Ollama so it holds no GPU memory overnight.
+finale_llm gpu uv run python -u finale_llm.py --run runs/day6_full --llm-model qwen3.6:35b-a3b; rc=$?; curl -s -m 30 http://100.103.129.82:11434/api/generate -d '{"model":"qwen3.6:35b-a3b","keep_alive":0}' >/dev/null; exit $rc
+
+# c. Both halves on one chart: runs/day6_full/finale.json
+finale_merge cpu uv run python finale_merge.py --run runs/day6_full
+
+# d. Tomorrow's config: 12 generations on the four training days, scored every generation on two
+#    validation days it is never selected on, with fee-free scores logged for both tribes.
+validation_run gpu uv run python -u -m scripts.run_evolution --generations 12 --val-windows 2 --run-id day7_validation

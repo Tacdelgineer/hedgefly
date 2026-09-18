@@ -26,6 +26,8 @@ def main() -> None:
     p.add_argument("--population", type=int, default=default.population)
     p.add_argument("--bars", type=int, default=default.bars, help="decision bars per fixed day")
     p.add_argument("--windows", type=int, default=default.windows, help="fixed days every fly trades")
+    p.add_argument("--val-windows", type=int, default=default.val_windows,
+                   help="validation days every fly is scored on and none is selected on")
     p.add_argument("--fee-bps", type=float, default=default.fee_bps, help="per side")
     p.add_argument("--min-hold-bars", type=int, default=default.min_hold_bars)
     p.add_argument("--mutation-rate", type=float, default=default.mutation_rate)
@@ -49,15 +51,21 @@ def main() -> None:
     c = report["competitors"]
     print(f"competitors on the fixed days (geometric mean): momentum ${c['momentum']['final_equity']:,.2f}, "
           f"random ${c['random']['final_equity']:,.2f}, buy & hold ${c['buy_and_hold']['final_equity']:,.2f}")
-    print("\n| gen | real best | real median | scrambled best | scrambled median | trades/day real | trades/day scr |")
-    print("| --- | --- | --- | --- | --- | --- | --- |")
+    val = bool(report.get("validation_windows"))
+    head = "| gen | real best | real median | scrambled best | scrambled median | trades/day real | trades/day scr |"
+    print("\n" + head + (" VALIDATION real median | VALIDATION scr median |" if val else ""))
+    print("|" + " --- |" * (7 + 2 * val))
     for s in report["summaries"]:
         t = s["tribes"]
-        print(f"| {s['generation']} | ${t['real']['final_equity']['best']:,.2f} "
-              f"| ${t['real']['final_equity']['median']:,.2f} "
-              f"| ${t['scrambled']['final_equity']['best']:,.2f} "
-              f"| ${t['scrambled']['final_equity']['median']:,.2f} "
-              f"| {t['real']['trades']['median_per_day']:g} | {t['scrambled']['trades']['median_per_day']:g} |")
+        row = (f"| {s['generation']} | ${t['real']['final_equity']['best']:,.2f} "
+               f"| ${t['real']['final_equity']['median']:,.2f} "
+               f"| ${t['scrambled']['final_equity']['best']:,.2f} "
+               f"| ${t['scrambled']['final_equity']['median']:,.2f} "
+               f"| {t['real']['trades']['median_per_day']:g} | {t['scrambled']['trades']['median_per_day']:g} |")
+        if val:
+            row += (f" ${t['real']['validation']['final_equity']['median']:,.2f} "
+                    f"| ${t['scrambled']['validation']['final_equity']['median']:,.2f} |")
+        print(row)
     for name in ("real", "scrambled"):
         hero = report["summaries"][-1]["tribes"][name]["hero_lineage"]
         print(f"\n{name} hero lineage: {hero['id']} (born gen {hero['born']}, {hero['origin']}, "

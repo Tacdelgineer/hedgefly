@@ -24,7 +24,7 @@ import torch
 from brain import Genome, TribeAgent, build_eye, scramble
 from brain.agent import MIN_CALIBRATION_CHARTS
 from evolve.logs import EQUITY_PLACES, rounded, write_json
-from market import FEE_BPS, MIN_HOLD_BARS, START_CASH, Wallet, load_evolve, render_range, trade_window
+from market import FEE_BPS, MIN_HOLD_BARS, START_CASH, Wallet, load_evolve, render_range, replay, trade_window
 from market.chart import WINDOW
 
 TOP_N = 10                  # champions per tribe (PLAN.md FINALE)
@@ -34,6 +34,7 @@ HOURLY = 12                 # five-minute bars in an hour
 # The flies' extra pass: decisions once an hour, real fees, so they can be charted against the
 # language model, which is only ever asked hourly.
 HOURLY_PASS = "hourly_with_fees"
+HOURLY_FREE_PASS = "hourly_no_fees"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -116,10 +117,30 @@ def acting_every(decide, first: int, every: int):
 
 
 def trade_champions(agent: TribeAgent, champs: Champions, candles: pd.DataFrame, first: int, last: int,
-                    fee_bps: float, min_hold_bars: int, every: int = 1) -> dict:
+                    fee_bps: float, min_hold_bars: int, every: int = 1) -> tuple[dict, np.ndarray]:
+    """The champions over the bars, brains running. Returns their record and the (T, P) actions
+    they took, which is all a fee-free pass needs (replay_champions)."""
     wallet = Wallet(champs.genome.population, fee_bps=fee_bps, min_hold_bars=min_hold_bars)
     decide = acting_every(agent.start(champs.genome).decide, first, every)
     result = trade_window(decide, candles, first, last, wallet)
+    return champion_record(champs, result, wallet), result.actions
+
+
+def replay_champions(champs: Champions, actions: np.ndarray, candles: pd.DataFrame, first: int, last: int,
+                     fee_bps: float, min_hold_bars: int, reference_trades: list[int]) -> dict:
+    """The same champions under different fees, without running a brain again.
+
+    Exact, because no fill depends on the fee: the actions they took replay through the new
+    wallet to the run it would have produced (market.session.replay, proven in
+    tests/test_replay.py). Every fly's fills are checked against the run it came from."""
+    wallet = Wallet(champs.genome.population, fee_bps=fee_bps, min_hold_bars=min_hold_bars)
+    result = replay(actions, candles, first, last, wallet)
+    if [int(x) for x in result.trades] != list(reference_trades):
+        raise RuntimeError("a replay filled differently from the run it was replayed from")
+    return champion_record(champs, result, wallet)
+
+
+def champion_record(champs: Champions, result, wallet: Wallet) -> dict:
     return {"ids": champs.ids,
             "final_equity": [round(float(e), EQUITY_PLACES) for e in result.final_equity],
             "trades": [int(t) for t in result.trades],

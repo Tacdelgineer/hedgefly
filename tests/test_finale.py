@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import torch
 
+from brain import Genome
 from finale_shared import champions_of, last_generation
 from story.llm import describe_window, parse_action
 from tests.test_no_lookahead import candles, rewrite_future
@@ -156,3 +157,31 @@ def test_the_merge_carries_the_hourly_pass_and_lines_up_the_cadence_chart():
     assert set(joined["cadence"]["lines"]) == {"real_every_bar", "real_hourly", "scrambled_every_bar",
                                                "scrambled_hourly", "llm_hourly"}
     assert joined["cadence"]["fee_bps"] == 5.0
+
+
+def test_a_fee_free_champion_pass_is_a_replay_checked_fly_by_fly():
+    """The finale's two fee-free passes are the brains' actions replayed, not a second run of
+    the brains. The replay must refuse to report a fly whose fills changed."""
+    import numpy as np
+    from finale_shared import Champions, replay_champions
+    from market import BUY, HOLD, SELL
+    frame = candles(400)
+    first, last = 63, 200
+    genome = Genome.random(2, GROUPS, torch.Generator().manual_seed(0))
+    champs = Champions("real", genome, [{"id": "real-f00001"}, {"id": "real-f00002"}])
+    acts = np.full((last - first + 1, 2), HOLD, np.int8)
+    acts[0], acts[10], acts[20] = [BUY, BUY], [SELL, HOLD], [BUY, SELL]
+    free = replay_champions(champs, acts, frame, first, last, 0.0, 3, [3, 2])
+    assert free["trades"] == [3, 2] and free["ids"] == ["real-f00001", "real-f00002"]
+    with pytest.raises(RuntimeError, match="filled differently"):
+        replay_champions(champs, acts, frame, first, last, 0.0, 3, [1, 2])
+
+
+def test_the_merge_carries_both_hourly_passes():
+    from finale_merge import merge
+    tribe = {"mean_equity": [1000.0], "final_equity": [1000.0]}
+    blank = {"fee_bps": 5.0, "min_hold_bars": 3, "tribes": {"real": tribe, "scrambled": tribe}, "competitors": {}}
+    flies = {"run": "r", "bars": 1, "first_time": "a", "last_time": "b", "data": "d", "rehearsal": False,
+             "generation": 1, "champions_per_tribe": 10, "entry_price": 1.0, "exit_price": 1.0,
+             "passes": {"with_fees": blank, "no_fees": blank, "hourly_with_fees": blank, "hourly_no_fees": blank}}
+    assert {"hourly_with_fees", "hourly_no_fees"} <= set(merge(flies, None)["passes"])

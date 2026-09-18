@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from evolve.logs import write_json
-from finale_shared import HOURLY_PASS, PASSES, TRIBES, part_path
+from finale_shared import HOURLY_FREE_PASS, HOURLY_PASS, PASSES, TRIBES, part_path
 
 MUST_MATCH = ("run", "bars", "first_time", "last_time", "data", "rehearsal")
 
@@ -55,8 +55,9 @@ def merge(flies: dict, llm: dict | None) -> dict:
         if llm:
             joined["competitors"].update(llm["passes"][label]["competitors"])
         out["passes"][label] = joined
-    if HOURLY_PASS in flies["passes"]:
-        out["passes"][HOURLY_PASS] = flies["passes"][HOURLY_PASS]
+    for hourly in (HOURLY_PASS, HOURLY_FREE_PASS):
+        if hourly in flies["passes"]:
+            out["passes"][hourly] = flies["passes"][hourly]
     out["cadence"] = cadence_chart(out, llm)
     return out
 
@@ -94,18 +95,18 @@ def table(merged: dict) -> None:
         a = with_fees["competitors"][name]["final_equity"]
         b = no_fees["competitors"].get(name, {}).get("final_equity", float("nan"))
         print(f"| {name} | ${a:,.2f} | ${b:,.2f} | ${b - a:,.2f} |")
-    hourly = merged["passes"].get(HOURLY_PASS)
+    hourly, hourly_free = merged["passes"].get(HOURLY_PASS), merged["passes"].get(HOURLY_FREE_PASS)
     if hourly:
-        print("\n| cadence, real fees | final equity |")
-        print("| --- | --- |")
+        print("\n| cadence | with fees | no fees |")
+        print("| --- | --- | --- |")
+        mean = lambda block, name: float(np.mean(block["tribes"][name]["final_equity"])) if block else float("nan")
         for name in TRIBES:
             if name in hourly["tribes"]:
-                every = float(np.mean(with_fees["tribes"][name]["final_equity"]))
-                hour = float(np.mean(hourly["tribes"][name]["final_equity"]))
-                print(f"| {name} champions, every bar | ${every:,.2f} |")
-                print(f"| {name} champions, hourly | ${hour:,.2f} |")
+                print(f"| {name} champions, every bar | ${mean(with_fees, name):,.2f} | ${mean(no_fees, name):,.2f} |")
+                print(f"| {name} champions, hourly | ${mean(hourly, name):,.2f} | ${mean(hourly_free, name):,.2f} |")
         if "llm" in with_fees["competitors"]:
-            print(f"| llm, hourly | ${with_fees['competitors']['llm']['final_equity']:,.2f} |")
+            print(f"| llm, hourly | ${with_fees['competitors']['llm']['final_equity']:,.2f} "
+                  f"| ${no_fees['competitors'].get('llm', {}).get('final_equity', float('nan')):,.2f} |")
 
 
 def main() -> None:
