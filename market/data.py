@@ -18,7 +18,9 @@ LOCKED_PATH = DATA / "btc_locked_test.parquet"     # rule 3: finale.py only
 SPLIT_PATH = DATA / "split.json"                   # ranges and counts of both files, safe to read
 
 CANDLE_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
-LOCKED_READER = "finale.py"
+# Rule 3 names the finale. The finale is two scripts now - the flies need the GPU, the
+# language model needs the endpoint - so the allowlist names both, exactly, and nothing else.
+LOCKED_READERS = ("finale_flies.py", "finale_llm.py")
 
 
 def load_evolve() -> pd.DataFrame:
@@ -27,10 +29,11 @@ def load_evolve() -> pd.DataFrame:
 
 
 def load_locked() -> pd.DataFrame:
-    """The locked test set. Only finale.py may call this (rule 3)."""
+    """The locked test set. Only the finale scripts may call this (rule 3)."""
     caller = Path(inspect.stack()[1].filename).name
-    if caller != LOCKED_READER:
-        raise PermissionError(f"the locked test set is loaded only by {LOCKED_READER}, not by {caller} (PLAN.md rule 3)")
+    if caller not in LOCKED_READERS:
+        raise PermissionError(f"the locked test set is loaded only by {' or '.join(LOCKED_READERS)}, "
+                              f"not by {caller} (PLAN.md rule 3)")
     return read_candles(LOCKED_PATH)
 
 

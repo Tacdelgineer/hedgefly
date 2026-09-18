@@ -20,8 +20,12 @@ Deadline: published within 7 days.
    connectome. If using nfly, learnable edge gains, biases and leaks stay at init.
 2. **Only the genome evolves.** Genome = encoder gains + decoder (readout) weights.
    Nothing else.
-3. **The test set is locked.** The last 6 months of candles live in a separate file
-   that is loaded ONLY by `finale.py`. No other code may import or read it.
+3. **The test set is locked.** The last 6 months of candles live in a separate file that is
+   loaded ONLY by the finale scripts, `finale_flies.py` and `finale_llm.py` (they are split
+   because the flies need the GPU and the language model needs the endpoint; they write parts
+   of one result). `market.data.load_locked` checks its caller against that exact list and
+   refuses everyone else. No other code may import or read it - not the merge step, not the
+   exporter, not a test.
 4. **No lookahead.** A decision made at candle close t executes at candle t+1 open.
    There must be a unit test for this.
 5. **Fees on every trade.** 5 bps per side, configurable, plus a minimum hold: a fly's

@@ -1,7 +1,7 @@
 """The finale's rigging: the right champions, and a language model that cannot see the future.
 
 The finale itself is not run here - it opens the locked test set, and it runs once, on camera
-(PLAN.md rule 3 and FINALE)."""
+(PLAN.md rule 3 and FINALE). The merge step that joins its two halves is tested too."""
 
 import json
 
@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from finale import champions_of, last_generation
+from finale_shared import champions_of, last_generation
 from story.llm import describe_window, parse_action
 from tests.test_no_lookahead import candles, rewrite_future
 
@@ -70,3 +70,38 @@ def test_an_unreadable_reply_is_a_hold_not_a_guess():
     assert parse_action("BUY") == 1 and parse_action("sell it all") == 2
     assert parse_action("HOLD") == 0
     assert parse_action("I am not sure") is None
+
+
+def test_the_merge_refuses_halves_that_traded_different_bars():
+    """Two traders judged on different data are not a race."""
+    from finale_merge import agree, merge
+    flies = {"run": "r", "bars": 100, "first_time": "a", "last_time": "b", "data": "locked test set",
+             "rehearsal": False, "generation": 3, "champions_per_tribe": 10,
+             "entry_price": 1.0, "exit_price": 2.0,
+             "passes": {"with_fees": {"fee_bps": 5.0, "min_hold_bars": 3, "tribes": {"real": {}},
+                                      "competitors": {"momentum": {"final_equity": 900.0}}},
+                        "no_fees": {"fee_bps": 0.0, "min_hold_bars": 3, "tribes": {"real": {}},
+                                    "competitors": {"momentum": {"final_equity": 910.0}}}}}
+    llm = {"run": "r", "bars": 100, "first_time": "a", "last_time": "b", "data": "locked test set",
+           "rehearsal": False, "model": "Qwen3.8-27B", "bars_between_decisions": 12,
+           "passes": {"with_fees": {"competitors": {"llm": {"final_equity": 1010.0}}},
+                      "no_fees": {"competitors": {"llm": {"final_equity": 1020.0}}}}}
+    agree(flies, llm)
+    joined = merge(flies, llm)
+    assert joined["parts"] == ["flies", "llm"]
+    assert set(joined["passes"]["with_fees"]["competitors"]) == {"momentum", "llm"}
+    assert joined["passes"]["no_fees"]["competitors"]["llm"]["final_equity"] == 1020.0
+
+    with pytest.raises(SystemExit, match="did not trade the same thing"):
+        agree(flies, {**llm, "bars": 99})
+
+
+def test_the_chart_can_be_drawn_without_the_language_model():
+    from finale_merge import merge
+    flies = {"run": "r", "bars": 100, "first_time": "a", "last_time": "b", "data": "d",
+             "rehearsal": False, "generation": 3, "champions_per_tribe": 10,
+             "entry_price": 1.0, "exit_price": 2.0,
+             "passes": {"with_fees": {"fee_bps": 5.0, "min_hold_bars": 3, "tribes": {}, "competitors": {}},
+                        "no_fees": {"fee_bps": 0.0, "min_hold_bars": 3, "tribes": {}, "competitors": {}}}}
+    joined = merge(flies, None)
+    assert joined["parts"] == ["flies"] and "llm" not in joined

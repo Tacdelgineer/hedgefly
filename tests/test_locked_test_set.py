@@ -1,17 +1,17 @@
-"""PLAN.md rule 3: the locked test set is loaded only by finale.py."""
+"""PLAN.md rule 3: the locked test set is loaded only by the two finale scripts."""
 
 from pathlib import Path
 
 import pytest
 
-from market.data import LOCKED_READER, load_locked
+from market.data import LOCKED_READERS, load_locked
 
 REPO = Path(__file__).resolve().parents[1]
 CODE_DIRS = ("brain", "market", "evolve", "story", "scripts", "visuals", "tests")
 
-# The writer, the loader that guards it, the one reader, and this test.
-MAY_MENTION_THE_LOCKED_FILE = {"market/fetch_btc.py", "market/data.py", "finale.py",
-                               "tests/test_locked_test_set.py"}
+# The writer, the loader that guards it, the two readers, and this test.
+MAY_MENTION_THE_LOCKED_FILE = {"market/fetch_btc.py", "market/data.py", "finale_flies.py",
+                               "finale_llm.py", "tests/test_locked_test_set.py"}
 MENTIONS = ("btc_locked_test", "LOCKED_PATH", "load_locked")
 
 
@@ -21,8 +21,15 @@ def python_files() -> list[Path]:
 
 
 def test_loading_the_locked_set_from_anywhere_else_is_refused():
-    with pytest.raises(PermissionError, match=LOCKED_READER):
+    with pytest.raises(PermissionError, match=LOCKED_READERS[0]):
         load_locked()
+
+
+def test_the_allowlist_is_exactly_the_two_finale_scripts():
+    """Splitting the finale widened the list by one name. It may not widen again by accident,
+    and it may never become a prefix match: `finale_merge.py` reads the parts, not the data."""
+    assert set(LOCKED_READERS) == {"finale_flies.py", "finale_llm.py"}
+    assert "finale_merge.py" not in LOCKED_READERS
 
 
 def test_only_finale_and_the_market_plumbing_name_the_locked_file():
