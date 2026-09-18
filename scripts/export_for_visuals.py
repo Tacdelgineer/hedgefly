@@ -114,9 +114,20 @@ def hero_frame(summary: dict, tribe: str) -> dict:
             if "validation_fitness" in hero else {})
 
 
+def newborn(log: dict, tribe: str, generation: int) -> dict:
+    """How this generation's flies came to be: founders, children of last generation's
+    survivors, and newcomers - counted from each fly's own record, for the Nursery."""
+    counts = {"founder": 0, "child": 0, "newcomer": 0, "survivor": 0}
+    for fly in log["tribes"][tribe]["flies"]:
+        counts[fly["origin"] if fly["born"] == generation else "survivor"] += 1
+    return counts
+
+
 def frame_of(summary: dict, log: dict) -> dict:
+    g = summary["generation"]
+    tribes = {t: tribe_frame(summary, log, t) | {"born": newborn(log, t, g)} for t in TRIBES}
     return {"generation": summary["generation"],
-            "tribes": {t: tribe_frame(summary, log, t) for t in TRIBES},
+            "tribes": tribes,
             "heroes": {t: hero_frame(summary, t) for t in TRIBES}}
 
 
@@ -162,6 +173,8 @@ def finale_block(path: Path, rehearsal: bool = False) -> dict | None:
         for name, row in block.get("competitors", {}).items():
             out["traders"][name] = {"final_equity": row["final_equity"], "trades": row.get("trades"),
                                     "curve": thin(row["equity"])}
+            if "replies" in row:                       # what the model actually said
+                out["traders"][name]["replies"] = row["replies"]
         passes[label] = out
     return {"run": raw["run"], "generation": raw["generation"], "rehearsal": raw.get("rehearsal", False),
             "data": raw["data"], "bars": raw["bars"], "first_time": raw["first_time"],
