@@ -23,13 +23,15 @@
   #rooms{display:flex;gap:6px;flex-wrap:wrap}
   #stat{flex-basis:100%;opacity:.8;font-size:11px;text-transform:none;letter-spacing:.04em}
   #stat .real{color:var(--cyan)} #stat .scr{color:var(--magenta)}
-  #inset{position:fixed;right:14px;bottom:96px;width:min(520px,44vw);aspect-ratio:16/9;border:1px solid rgba(216,220,255,.35);
-      background:#000;display:none;box-shadow:none}
+  /* the terminal renders at its own 1280x720 and is scaled down: a true miniature, not a squeeze */
+  #inset{--s:.44;position:fixed;right:14px;bottom:96px;width:calc(1280px*var(--s));height:calc(720px*var(--s));
+      border:1px solid rgba(216,220,255,.35);background:#000;display:none;overflow:hidden}
   #inset.open{display:block}
-  #inset iframe{width:100%;height:100%;border:0;display:block}
+  #inset iframe{width:1280px;height:720px;border:0;display:block;transform:scale(var(--s));transform-origin:0 0}
+  @media (max-width:1100px){#inset{--s:.34}}
   #inset .tag{position:absolute;left:8px;top:-18px;font:10px var(--mono);letter-spacing:.14em;color:var(--ghost);opacity:.7}
   body.vertical #ui{padding-bottom:16px} body.vertical #label{min-width:0}
-  body.vertical #inset{width:calc(100vw - 28px);bottom:150px}
+  body.vertical #inset{--s:calc((100vw - 28px) / 1280px);bottom:150px}
 </style>
 </head><body>
 <canvas id="stage" aria-label="Natural Selection Capital HQ: a neon riso diorama of two tribes of fly brains trading Bitcoin"></canvas>
@@ -403,6 +405,8 @@ function paint(){
     `buy &amp; hold ${money(bh.final_equity)} &nbsp;|&nbsp; ${eliminatedBefore(GEN).toLocaleString('en-US')} eliminated so far`+
     (RUN.fake?' &nbsp;·&nbsp; FAKE DATA':'');
   ui.play.textContent=PLAYING?'pause':'play';lastCam='';
+  const frame=ui.inset.querySelector('iframe');
+  if(ui.inset.classList.contains('open')&&frame.contentWindow)frame.contentWindow.postMessage({hedgefly:'gen',gen:GEN},'*');
 }
 function setGeneration(g){if(!RUN)return;GEN=clamp(Math.round(g),0,RUN.generations-1);paint()}
 function tick(now){
@@ -415,8 +419,12 @@ function tick(now){
 function openTerminal(on){
   ui.inset.classList.toggle('open',on);ui.terminal.classList.toggle('on',on);
   const frame=ui.inset.querySelector('iframe');
-  if(on&&!frame.dataset.loaded){frame.dataset.loaded='1';
-    if(window.__HEDGEFLY_TERMINAL__)frame.srcdoc=window.__HEDGEFLY_TERMINAL__;          // the standalone file
+  if(on&&!frame.dataset.loaded){frame.dataset.loaded='1';frame.onload=()=>paint();
+    if(window.__HEDGEFLY_TERMINAL__)                                                     // the standalone file:
+      // built from pieces: a literal comment-open or script tag inside a script block can
+      // confuse the HTML parser about where the block ends
+      frame.srcdoc=window.__HEDGEFLY_TERMINAL__.replace('<'+'!--HEDGEFLY-DATA--'+'>',
+        '<'+'script>window.__HEDGEFLY_RUN__='+JSON.stringify(RUN).replace(/</g,'\\u003c')+';<'+'/script>');
     else frame.src='../terminal/index.html?data='+encodeURIComponent(qs.get('data')||'../hq/runs.json')}
 }
 function wireUI(){
