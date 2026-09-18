@@ -36,6 +36,18 @@ from market.data import load_locked          # rule 3: this import belongs to th
 from story.llm import LOCAL_MODEL, LOCAL_URL, LLMRun, LLMTrader
 
 HOURLY = 12                 # bars between decisions: 12 five-minute bars
+WORDS = {0: "HOLD", 1: "BUY", 2: "SELL"}
+LAST_REPLIES = 24           # the model's last replies, kept word for word for the visuals
+
+
+def decisions_of(actions, candles, first: int, every: int) -> dict:
+    """What the model actually said: how often each word, and its last replies with their times.
+    Only the bars it was asked on count; between them it holds by rule, not by choice."""
+    asked = list(range(0, len(actions), every))
+    words = [WORDS[int(actions[k])] for k in asked]
+    return {"asked": len(asked), "counts": {w: words.count(w) for w in ("BUY", "SELL", "HOLD")},
+            "last": [[candles["timestamp"].iloc[first + k].isoformat(), WORDS[int(actions[k])]]
+                     for k in asked[-LAST_REPLIES:]]}
 
 
 def main() -> None:
@@ -88,7 +100,8 @@ def main() -> None:
                                                  "equity": rounded(run.equity, EQUITY_PLACES),
                                                  "model": args.llm_model,
                                                  "bars_between_decisions": args.every,
-                                                 "decisions_from": source}},
+                                                 "decisions_from": source,
+                                                 "replies": decisions_of(run.actions, candles, first, args.every)}},
                          "seconds": round(time.perf_counter() - started, 1)}
         print(f"  llm: ${run.final_equity:,.2f} in {run.trades} trades "
               f"({run.decisions:,} model calls, {run.unparsed} unreadable) "
