@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Natural Selection Capital HQ</title>
+<style>
+  :root{--paper:#07070b;--ghost:#d8dcff;--slate:#5b6cff;--cyan:#27f2d2;--magenta:#ff3d9a;--gold:#ffc93c;--amber:#ff7a1a;
+        --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--paper);overscroll-behavior:none}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:none}
+  #stage.drag{cursor:grabbing}
+  #ui{position:fixed;left:0;right:0;bottom:0;padding:9px 14px 11px;display:flex;flex-wrap:wrap;align-items:center;
+      gap:10px;font:12px/1.5 var(--mono);color:var(--ghost);letter-spacing:.08em;
+      background:linear-gradient(to top,rgba(7,7,11,.96),rgba(7,7,11,.78));border-top:1px solid rgba(91,108,255,.45);
+      user-select:none;text-transform:uppercase}
+  #ui button{font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--ghost);background:transparent;
+      border:1px solid rgba(216,220,255,.45);padding:3px 10px;cursor:pointer}
+  #ui button:hover{border-color:var(--ghost);background:rgba(91,108,255,.18)}
+  #ui button.on{color:var(--gold);border-color:var(--gold)}
+  #play{min-width:66px;color:var(--gold)!important;border-color:var(--gold)!important}
+  #scrub{flex:1 1 200px;min-width:140px;accent-color:var(--gold);height:18px}
+  #label{min-width:150px}
+  #rooms{display:flex;gap:6px;flex-wrap:wrap}
+  #stat{flex-basis:100%;opacity:.8;font-size:11px;text-transform:none;letter-spacing:.04em}
+  #stat .real{color:var(--cyan)} #stat .scr{color:var(--magenta)}
+  #inset{position:fixed;right:14px;bottom:96px;width:min(520px,44vw);aspect-ratio:16/9;border:1px solid rgba(216,220,255,.35);
+      background:#000;display:none;box-shadow:none}
+  #inset.open{display:block}
+  #inset iframe{width:100%;height:100%;border:0;display:block}
+  #inset .tag{position:absolute;left:8px;top:-18px;font:10px var(--mono);letter-spacing:.14em;color:var(--ghost);opacity:.7}
+  body.vertical #ui{padding-bottom:16px} body.vertical #label{min-width:0}
+  body.vertical #inset{width:calc(100vw - 28px);bottom:150px}
+</style>
+</head><body>
+<canvas id="stage" aria-label="Natural Selection Capital HQ: a neon riso diorama of two tribes of fly brains trading Bitcoin"></canvas>
+<div id="inset"><span class="tag">fly terminal · inset</span><iframe title="fly terminal" loading="lazy"></iframe></div>
+<div id="ui">
+  <button id="play">pause</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
+  <span id="label">generation 0</span>
+  <span id="rooms"></span>
+  <button id="terminal" title="the fly terminal, as an inset">terminal</button>
+  <div id="stat"></div>
+</div>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   NATURAL SELECTION CAPITAL HQ — neon riso (visuals/style.md), data contract v2
+   (visuals/hq/data-contract.md). Six rooms, one run, replayed generation by generation.
+   ===================================================================== */
+/* =====================================================================
+   RUNTIME — layout, camera, 12fps boil, input, export
+   ===================================================================== */
+const ROOMS=[];
+function room(def){ROOMS.push({w:10,d:10,h:3,col:0,row:0,...def})}
+const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
+const qs=new URLSearchParams(location.search);
+const FPS=12,BOIL_EVERY=4,GAP=2.5,MIN_Z=.15,MAX_Z=6;
+let W=1,H=1,dpr=1,started=performance.now(),lastFrame=-1,lastCam='';
+const cam={x:0,y:0,zoom:1};let vel={x:0,y:0},tween=null,idleSince=performance.now(),tourIndex=-1;
+
+function layout(){
+  const SLOT=Math.max(...ROOMS.map(r=>Math.max(r.w,r.d)))+GAP;   // grid pitch in tiles
+  for(const r of ROOMS){r.oi=r.col*SLOT;r.oj=r.row*SLOT;[r.ox,r.oy]=iso(r.oi,r.oj);
+    const pts=[];for(const a of[-.5,r.w+.3])for(const b of[-.5,r.d+.3])for(const z of[-1,r.h+.6])pts.push(iso(r.oi+a,r.oj+b,z));
+    r.bounds=[Math.min(...pts.map(q=>q[0])),Math.min(...pts.map(q=>q[1])),Math.max(...pts.map(q=>q[0])),Math.max(...pts.map(q=>q[1]))];}
+  ROOMS.sort((a,b)=>(a.oi+a.oj)-(b.oi+b.oj));
+}
+const framing=b=>({x:(b[0]+b[2])/2,y:(b[1]+b[3])/2,zoom:clamp(Math.min(W/(b[2]-b[0]),H/(b[3]-b[1]))*.92,MIN_Z,MAX_Z)});
+function fitAll(){const b=ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);return framing(b)}
+function flyTo(target,ms=1100){tween={from:{...cam},to:target,start:performance.now(),ms}}
+const toWorld=(sx,sy)=>({x:(sx-W/2)/cam.zoom+cam.x,y:(sy-H/2)/cam.zoom+cam.y});
+function resize(){W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastCam=''}
+
+function draw(frameNo){
+  const t=frameNo/FPS,boil=Math.floor(frameNo/BOIL_EVERY),z=cam.zoom;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,stage.width,stage.height);
+  ctx.setTransform(dpr*z,0,0,dpr*z,dpr*(W/2-cam.x*z),dpr*(H/2-cam.y*z));
+  const a=toWorld(0,0),b=toWorld(W,H);
+  for(const r of ROOMS){
+    if(r.bounds[2]<a.x||r.bounds[0]>b.x||r.bounds[3]<a.y||r.bounds[1]>b.y)continue;
+    const pen=makePen(ctx,{ox:r.ox,oy:r.oy,boil});
+    try{if(r.shell!==false)pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id))}catch(e){console.error('room '+r.id,e)}
+    ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  }
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
+}
+
+function frame(now){
+  requestAnimationFrame(frame);
+  if(innerWidth!==W||innerHeight!==H)resize();
+  if(tween){const u=clamp((now-tween.start)/tween.ms,0,1),e=ease(u);
+    cam.x=lerp(tween.from.x,tween.to.x,e);cam.y=lerp(tween.from.y,tween.to.y,e);cam.zoom=lerp(tween.from.zoom,tween.to.zoom,e)*(1-Math.sin(u*Math.PI)*.12);
+    if(u>=1)tween=null}
+  else if(!pointers.size){cam.x+=vel.x*16;cam.y+=vel.y*16;vel.x*=.92;vel.y*=.92}
+  const f=qs.has('frame')?+qs.get('frame'):Math.floor((now-started)/1000*FPS);
+  const key=`${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(4)},${W},${H},${GEN}`;
+  if(f!==lastFrame||key!==lastCam){draw(f);lastFrame=f;lastCam=key}
+}
+
+const pointers=new Map();let drag=null,pinch=null;
+const touch=()=>{idleSince=performance.now();tween=null};
+stage.addEventListener('pointerdown',e=>{touch();stage.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});vel={x:0,y:0};
+  drag={x:e.clientX,y:e.clientY,t:performance.now()};
+  if(pointers.size===2){const [p1,p2]=[...pointers.values()];pinch={d:Math.hypot(p1.x-p2.x,p1.y-p2.y),zoom:cam.zoom,anchor:toWorld((p1.x+p2.x)/2,(p1.y+p2.y)/2)}}
+  stage.classList.add('drag')});
+stage.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;touch();pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size>=2&&pinch){const [p1,p2]=[...pointers.values()],mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2;
+    cam.zoom=clamp(pinch.zoom*Math.hypot(p1.x-p2.x,p1.y-p2.y)/Math.max(1,pinch.d),MIN_Z,MAX_Z);cam.x=pinch.anchor.x-(mx-W/2)/cam.zoom;cam.y=pinch.anchor.y-(my-H/2)/cam.zoom;return}
+  if(!drag)return;const now=performance.now(),dx=e.clientX-drag.x,dy=e.clientY-drag.y,dt=Math.max(8,now-drag.t);
+  cam.x-=dx/cam.zoom;cam.y-=dy/cam.zoom;vel={x:lerp(vel.x,-dx/cam.zoom/dt,.6),y:lerp(vel.y,-dy/cam.zoom/dt,.6)};drag={x:e.clientX,y:e.clientY,t:now}});
+const up=e=>{pointers.delete(e.pointerId);pinch=null;if(pointers.size)return;if(!drag||performance.now()-drag.t>90)vel={x:0,y:0};drag=null;stage.classList.remove('drag')};
+stage.addEventListener('pointerup',up);stage.addEventListener('pointercancel',up);
+stage.addEventListener('wheel',e=>{e.preventDefault();touch();vel={x:0,y:0};const a=toWorld(e.clientX,e.clientY);
+  cam.zoom=clamp(cam.zoom*Math.exp(-clamp(e.deltaY,-300,300)*.0015),MIN_Z,MAX_Z);cam.x=a.x-(e.clientX-W/2)/cam.zoom;cam.y=a.y-(e.clientY-H/2)/cam.zoom},{passive:false});
+stage.addEventListener('dblclick',e=>{const w=toWorld(e.clientX,e.clientY),r=ROOMS.find(r=>w.x>=r.bounds[0]&&w.x<=r.bounds[2]&&w.y>=r.bounds[1]&&w.y<=r.bounds[3]);
+  if(r){touch();tourIndex=ROOMS.indexOf(r);flyTo(framing(r.bounds))}});
+addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;const k=e.key.toLowerCase(),step=120/cam.zoom;touch();
+  if(k==='arrowleft'||k==='a')cam.x-=step;else if(k==='arrowright'||k==='d')cam.x+=step;
+  else if(k==='arrowup'||k==='w')cam.y-=step;else if(k==='arrowdown'||k==='s')cam.y+=step;
+  else if(k==='+'||k==='=')cam.zoom=clamp(cam.zoom*1.2,MIN_Z,MAX_Z);else if(k==='-')cam.zoom=clamp(cam.zoom/1.2,MIN_Z,MAX_Z);
+  else if(k==='0')flyTo(fitAll(),900);
+  else if(k==='p')stage.toBlob(b=>{const l=document.createElement('a');l.href=URL.createObjectURL(b);l.download=(document.title||'print')+'.png';l.click()});
+  else return;e.preventDefault()});
+
+function start(){
+  layout();resize();
+  const r=ROOMS.find(r=>r.id===qs.get('room'));
+  Object.assign(cam,r?framing(r.bounds):fitAll());
+  if(qs.has('zoom'))cam.zoom=+qs.get('zoom');
+  requestAnimationFrame(frame);
+}
+
+
+/* ---------- the run being replayed ---------- */
+let RUN=null,GEN=0,PLAYING=true;
+const TRIBE_INK={real:'cyan',scrambled:'magenta'};
+const F=()=>RUN&&RUN.frames[Math.min(GEN,RUN.frames.length-1)];
+const hero=tribe=>{const f=F();return f&&f.heroes[tribe]};
+const eliminatedBefore=g=>{let n=0;if(RUN)for(let k=0;k<g&&k<RUN.frames.length;k++)for(const t of RUN.tribes)n+=RUN.frames[k].tribes[t].eliminated;return n};
+const S3=v=>String(v).padStart(2,'0');
+
+/* =====================  THE LAB  =====================
+   Where it starts: a DGX Spark on a desk, a jar of real fruit flies, a fly on the night shift. */
+room({id:'lab',col:0,row:0,w:7,d:7,h:3,
+  style:{floor:['slate',.3],wall:['slate',.13],wall2:['slate',.17],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=F(),busy=f?Math.min(1,f.tribes.real.trades.median_per_day/10):.4;
+    pen.window('j',1.1,1.15,1.9,1.35,{sky:'slate',patch:false});
+    for(let k=0;k<9;k++){const [x,y]=pen.wallQuad('j',1.2+rand(R,0,1.7),1.25+rand(R,0,1.2),.01,.01,.05)[0];pen.dot(x,y,.9,'ghost',.5+.5*Math.sin(t*2+k))}
+    const board=pen.wallQuad('i',3.3,.95,3.4,1.75,.05);
+    pen.shape(board,['slate',.12],{w:1.2});
+    text(pen,'REAL',pen.wallQuad('i',3.5,2.4,.01,.01,.11)[0],17,{wall:'i',ink:'cyan'});
+    text(pen,'VS',pen.wallQuad('i',3.5,2.04,.01,.01,.11)[0],12,{wall:'i',tone:.6});
+    text(pen,'SHUFFLED',pen.wallQuad('i',3.5,1.66,.01,.01,.11)[0],13,{wall:'i',ink:'magenta'});
+    if(f)text(pen,'GEN '+S3(f.generation),pen.wallQuad('i',3.5,1.2,.01,.01,.11)[0],13,{wall:'i',tone:.8});
+    pen.rug(1.2,2.6,4.4,3.6,{ink:'slate',tone:.18,border:'slate'});
+    pen.glow(3.1,3.2,.78,1.6,'ghost',.35+busy*.3);
+    pen.bookcase('i',.4,2.3,2.2,{rows:4});
+    pen.plant(6.4,.9,0,{t,size:1.1});
+    pen.lamp(.75,4.9,{t});
+    pen.table(2.2,2.9,3.4,1.7,.75,{ink:'slate',tone:.32});
+    // the Spark: a small dark slab whose front panel breathes with the flies' trading
+    pen.box(2.5,3.05,.75,1.25,.9,.5,{ink:'slate',tone:.55,shadow:true});
+    const [fx,fy]=p(2.5,3.9,.9);
+    for(let k=0;k<7;k++)pen.line([[fx+6+k*5,fy-3],[fx+6+k*5,fy-14]],'ghost',.8,{amp:.15,tone:.45});
+    const pulse=.55+.45*Math.sin(t*(1.4+busy*3.2));
+    pen.halo(fx+48,fy-8,9,'ghost',pulse);pen.dot(fx+48,fy-8,2.4,'ghost',pulse);
+    text(pen,'DGX SPARK',[fx+2,fy-31],6.5,{tone:.8,w:.8});
+    for(let k=0;k<4;k++){const [ax,ay]=p(2.6+k*.22,3.98,.74),[bx,by]=p(2.4+k*.3,4.7,0);
+      pen.line(smooth([[ax,ay],[ax+8,ay+16+k*3],[bx,by]],false,2),'slate',1.5,{tone:.7,amp:.5})}
+    // the jar: the actual animals, the real tribe's namesakes
+    const [jx,jy]=p(4.9,3.2,.76);
+    pen.shape(smooth([[jx-14,jy],[jx+14,jy],[jx+13,jy-36],[jx-13,jy-36]],true,1),['slate',.1],{w:1.1});
+    pen.line([[jx-14,jy-36],[jx+14,jy-36]],'ghost',1.6,{tone:.8});
+    for(let k=0;k<7;k++){const a=t*(.7+k*.23)+k,r=4+k*1.6;
+      pen.minifly(jx+Math.cos(a*1.7)*r,jy-13-Math.sin(a*2.1)*11,.8,'cyan',.9,t,k)}
+    text(pen,'D. MELANOGASTER',[jx-24,jy+11],5,{tone:.6,w:.6});
+    pen.books(1.35,3.15,.76,3);
+    const [mx,my]=p(4.1,4.0,.75);
+    pen.shape(smooth([[mx-4,my],[mx+4,my],[mx+4,my-8],[mx-4,my-8]],true,1),['slate',.5],{w:.9});
+    pen.steam(mx,my-10,t,{n:3});
+    pen.chair(3.0,5.1,{back:'i',ink:'slate',tone:.4});
+    pen.fly(3.3,5.4,.45,{t,pose:'sit',ink:'slate',scale:1.25,facing:-1,phase:.3});
+    for(let k=0;k<5;k++){const i=rand(R,1.1,2.2),j=rand(R,5.2,6.3);
+      pen.shape([p(i,j,.01),p(i+.4,j+.05,.01),p(i+.36,j+.42,.01),p(i-.04,j+.37,.01)],['slate',.12],{w:.6})}
+  }});
+
+/* =====================  THE BRAIN ROOM  =====================
+   Two connectome sculptures: the fly's own wiring, and the same wiring shuffled. */
+room({id:'brain',col:1,row:0,w:7,d:7,h:3.4,
+  style:{floor:['slate',.34],wall:['slate',.12],wall2:['slate',.16],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,f=F();
+    for(const [i,j,ink] of[[1.7,4.5,'cyan'],[5.1,1.5,'magenta']]){
+      pen.box(i-.6,j-.6,0,1.2,1.2,.6,{ink:'slate',tone:.45,topInk:ink,top:.28});
+      pen.glow(i,j,.02,1.8,ink,.4);
+    }
+    function sculpture(ci,cj,cz,radius,ink,tangled,key,speed){
+      const S=stream(key),N=20,nodes=[];
+      for(let k=0;k<N;k++){const a=rand(S,0,TAU),b=Math.acos(rand(S,-1,1)),r=radius*(.55+.45*rand(S,0,1));
+        nodes.push([ci+r*Math.sin(b)*Math.cos(a),cj+r*Math.sin(b)*Math.sin(a),cz+r*Math.cos(b)*.9])}
+      const edges=[];
+      for(let k=0;k<N;k++){
+        const near=nodes.map((n,m)=>[m,Math.hypot(n[0]-nodes[k][0],n[1]-nodes[k][1],n[2]-nodes[k][2])]).filter(([m])=>m!==k).sort((a,b)=>a[1]-b[1]);
+        for(const m of tangled?[randi(S,0,N-1),randi(S,0,N-1)]:[near[0][0],near[1][0]])edges.push([k,m]);
+      }
+      for(const [a,b] of edges)pen.line([p(...nodes[a]),p(...nodes[b])],ink,.8,{tone:.4,amp:.6});
+      const wave=(t*speed)%1;
+      for(const [a,b] of edges){const u=((a*7+b*13)%17)/17,d=(wave-u+1)%1;
+        if(d<.12){const A=p(...nodes[a]),B=p(...nodes[b]),k=d/.12;pen.halo(lerp(A[0],B[0],k),lerp(A[1],B[1],k),5,ink,.9)}}
+      for(const n of nodes){const [x,y]=p(...n);pen.shape(pen.circle(x,y,2.8,10),[ink,.9],{line:false})}
+      const top=p(ci,cj,cz+radius);pen.line([top,[top[0],top[1]-72]],'ghost',.8,{tone:.4,amp:.3});
+    }
+    const heat=f?Math.min(1,f.tribes.real.trades.median_per_day/10):.5;
+    sculpture(1.7,4.5,1.95,1,'cyan',false,'real-sculpture',.35+heat*.9);
+    sculpture(5.1,1.5,1.95,1,'magenta',true,'scrambled-sculpture',.35+heat*.9);
+    textCentred(pen,'REAL',p(1.7,5.55,.02),17,{ink:'cyan',w:1.4});
+    textCentred(pen,'SHUFFLED',p(5.1,2.55,.02),14,{ink:'magenta',w:1.3});
+    pen.shape(pen.wallQuad('j',3.2,1.5,3.3,1.55,.05),['slate',.1],{w:1.1});
+    text(pen,'166,700',pen.wallQuad('j',6.35,2.92,.01,.01,.11)[0],15,{wall:'j',tone:.85,w:1.3});
+    text(pen,'NEURONS EACH',pen.wallQuad('j',6.35,2.38,.01,.01,.11)[0],11,{wall:'j',tone:.6});
+    text(pen,'ONE EYE, SHARED',pen.wallQuad('j',6.35,1.95,.01,.01,.11)[0],11,{wall:'j',tone:.75});
+    pen.box(.4,1.2,0,.7,2.2,.45,{ink:'slate',tone:.3});
+    pen.fly(.8,2.1,.45,{t,pose:'sit',ink:'slate',scale:1.1,phase:1.1});
+    pen.fly(5.6,4.9,0,{t,pose:'hover',ink:'slate',scale:1.2,facing:-1,phase:2.4});
+    pen.plant(6.5,6.2,0,{t,size:1.05});
+  }});
+
+/* =====================  THE VAULT  =====================
+   The last six months, sealed. It opens in the finale and not before. */
+room({id:'vault',col:2,row:0,w:7,d:7,h:3.2,
+  style:{floor:['slate',.34],wall:['slate',.14],wall2:['slate',.18],planks:false},
+  draw(pen,t,R){
+    const p=pen.p;
+    pen.shape(pen.wallQuad('i',1.4,.05,4.2,2.75,.08),['slate',.3],{w:1.5});
+    pen.shape(pen.wallQuad('i',1.7,.25,3.6,2.35,.14),['amber',.14],{w:1.2,line:'amber'});
+    const [cx,cy]=pen.wallQuad('i',3.5,1.42,.01,.01,.2)[0];
+    pen.shape(pen.circle(cx,cy,46,26),['slate',.4],{w:1.6,line:'amber'});
+    pen.shape(pen.circle(cx,cy,34,22),['paper',0],{w:1.2,line:'amber'});
+    const turn=Math.sin(t*.5)*.05;
+    for(let k=0;k<6;k++){const a=turn+k*TAU/6;
+      pen.line([[cx+Math.cos(a)*7,cy+Math.sin(a)*7],[cx+Math.cos(a)*31,cy+Math.sin(a)*31]],'amber',2.4,{tone:.85});
+      pen.dot(cx+Math.cos(a)*31,cy+Math.sin(a)*31,3,'amber',.9)}
+    pen.halo(cx,cy,14,'amber',.8);pen.shape(pen.circle(cx,cy,8,14),['amber',.9],{line:'amber'});
+    textCentred(pen,'LOCKED',[cx,cy+54],22,{ink:'amber',w:1.8});
+    textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'amber',tone:.95,w:1.3});
+    textCentred(pen,'52,915 BARS',[cx,cy-66],11,{ink:'amber',tone:.7,w:1.1});
+    for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'amber',3,{tone:.45,amp:.2});
+    pen.line([p(1.3,3.8,.02),p(5.7,3.8,.02)],'ghost',2.2,{tone:.5,amp:.8});
+    for(let k=0;k<9;k++)pen.dot(...p(1.4+k*.52,3.8,.05),2,'ghost',.6);
+    const blink=Math.sin(t*2.2)>.2?1:.25;
+    const [lx,ly]=pen.wallQuad('i',3.5,2.95,.01,.01,.2)[0];pen.halo(lx,ly,10,'amber',blink);pen.dot(lx,ly,3.5,'amber',blink);
+    pen.glow(3.5,3.4,.02,2.2,'amber',.12+blink*.1);
+    for(const [i,j,h] of[[.6,4.4,.5],[.6,5.1,.35],[1.35,4.5,.4]])pen.box(i,j,0,.7,.6,h,{ink:'slate',tone:.35});
+    pen.fly(4.8,5.3,0,{t,pose:'stand',ink:'slate',scale:1.35,facing:-1,phase:.8});
+    textCentred(pen,'OPENS IN THE FINALE',p(4.6,7.4,.02),11,{ink:'amber',tone:.75,w:1.1});
+    pen.lamp(6.3,1.1,{t});
+  }});
+
+/* =====================  THE TRADING FLOOR  =====================
+   Two wings of fly traders, four to a desk, under a wall-sized screen of the four fixed days. */
+room({id:'floor',col:0,row:1,w:10,d:8,h:3.4,
+  style:{floor:['slate',.26],wall:['slate',.12],wall2:['slate',.15],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=F();
+    // the screen: the real candles of the four fixed days, each day on its own scale
+    const U0=.6,U1=9.4,Z0=1.35,Z1=3.05;
+    pen.shape(pen.wallQuad('i',U0-.12,Z0-.14,U1-U0+.24,Z1-Z0+.28,.04),['slate',.35],{w:1.5});
+    pen.shape(pen.wallQuad('i',U0,Z0,U1-U0,Z1-Z0,.06),['paper',0],{w:.8,lineTone:.4});
+    const days=RUN?RUN.windows:[],gap=.12,dw=(U1-U0-gap*(days.length-1))/Math.max(1,days.length);
+    days.forEach((day,d)=>{
+      const bars=day.candles||[];if(!bars.length)return;
+      const lo=Math.min(...bars.map(b=>b[2])),hi=Math.max(...bars.map(b=>b[1])),span=Math.max(hi-lo,1e-9);
+      const z=v=>Z0+.12+(v-lo)/span*(Z1-Z0-.34),u0=U0+d*(dw+gap),bw=dw/bars.length;
+      const W=(u,zz)=>p(u,.07,zz);
+      bars.forEach(([o,h,l,c],k)=>{const u=u0+(k+.5)*bw,ink=c>=o?'ghost':'slate',tone=c>=o?.8:.9;
+        pen.line([W(u,z(l)),W(u,z(h))],ink,.7,{tone:tone*.8,amp:0});
+        const a=z(Math.min(o,c)),b=Math.max(z(Math.max(o,c)),a+.012);
+        pen.tint([W(u-bw*.32,a),W(u+bw*.32,a),W(u+bw*.32,b),W(u-bw*.32,b)],ink,tone)});
+      if(d)pen.line([W(u0-gap/2,Z0+.05),W(u0-gap/2,Z1-.05)],'ghost',.6,{tone:.3,dash:[3,4]});
+      const m=day.price_move_pct;
+      text(pen,'DAY '+(d+1)+(m>=0?' +':' ')+m.toFixed(2)+'%',W(u0+.06,Z1-.06),6.5,{wall:'i',tone:.7,w:.8});
+    });
+    text(pen,'THE SAME FOUR DAYS, EVERY GENERATION',pen.wallQuad('i',U0,3.34,.01,.01,.07)[0],7,{wall:'i',tone:.55,w:.8});
+    // wing signs under the screen
+    text(pen,'REAL',pen.wallQuad('i',1.2,.92,.01,.01,.08)[0],18,{wall:'i',ink:'cyan',w:1.5});
+    text(pen,'SCRAMBLED',pen.wallQuad('i',5.95,.92,.01,.01,.08)[0],15,{wall:'i',ink:'magenta',w:1.4});
+    // the tote on the side wall
+    if(f){const tote=pen.wallQuad('j',1.2,.35,3.4,2.05,.07);pen.shape(tote,['slate',.18],{w:1.3});
+      const line=(s,z,ink,size)=>text(pen,s,pen.wallQuad('j',4.45,z,.01,.01,.14)[0],size,{wall:'j',ink,tone:.95,w:1.2});
+      line('GEN '+S3(f.generation),2.25,'ghost',15);
+      line('KEPT '+f.tribes.real.survived+' OF '+RUN.population,1.55,'ghost',11);
+      line('OUT '+(f.tribes.real.eliminated+f.tribes.scrambled.eliminated),1.02,'ghost',11)}
+    pen.rug(4.5,2.6,1,5.2,{ink:'slate',tone:.12,border:'slate'});
+    // the desks: 25 per wing, four traders each. A trader eliminated this generation is dim.
+    const desks=[];
+    for(const [tribe,i0] of[['real',.75],['scrambled',5.75]])for(let c=0;c<5;c++)for(let r=0;r<5;r++)
+      desks.push({tribe,i:i0+c*.72,j:2.9+r*.95,n:(c*5+r)*4});
+    desks.sort((a,b)=>(a.i+a.j)-(b.i+b.j));
+    for(const d of desks){
+      const rows=f?f.tribes[d.tribe].flies:[],ink=TRIBE_INK[d.tribe];
+      pen.box(d.i,d.j,0,.5,.34,.28,{ink:'slate',tone:.4,w:.6,shadow:true});
+      const [x0,y0]=p(d.i+.25,d.j+.17,.3);
+      [[-9,-5],[9,-5],[-9,6],[9,6]].forEach(([dx,dy],k)=>{
+        const fly=rows[d.n+k];if(!fly)return;
+        pen.minifly(x0+dx,y0+dy-6,1.05,ink,fly.eliminated?.28:1,t,d.n+k+(d.tribe==='real'?0:.5));
+      });
+    }
+    const walk=(t*.12)%1,jj=3+Math.abs(walk*2-1)*4.2;
+    pen.fly(5,jj,0,{t,pose:'hover',ink:'slate',scale:1.1,facing:walk<.5?1:-1,phase:1.7});
+  }});
+
+/* =====================  THE HERO'S DESK  =====================
+   One lineage, watched: the hero at work, its forebears framed on the wall, its equity line. */
+room({id:'hero',col:1,row:1,w:7,d:7,h:3.2,
+  style:{floor:['slate',.3],wall:['slate',.13],wall2:['slate',.16],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,h=hero('real');
+    // the equity line on the back-right wall: this lineage's best, generation by generation
+    const board=pen.wallQuad('i',1,1.05,4.9,1.8,.04);pen.shape(board,['slate',.1],{w:1.2});
+    if(RUN){const series=RUN.frames.map(q=>q.heroes.real.equity),n=series.length;
+      const lo=Math.min(...series,RUN.start_cash),hi=Math.max(...series,RUN.start_cash),span=Math.max(hi-lo,1e-9);
+      const at=(k,v)=>pen.wallQuad('i',1.3+(n<2?0:4.3*k/(n-1)),1.4+1.2*(v-lo)/span,.01,.01,.07)[0];
+      pen.line([at(0,RUN.start_cash),at(n-1,RUN.start_cash)],'ghost',.7,{tone:.35,dash:[4,4],amp:.2});
+      const P=series.slice(0,GEN+1).map((v,k)=>at(k,v));
+      if(P.length>1)pen.line(P,'gold',1.6,{tone:.95,amp:.25});
+      if(P.length){const [x,y]=P[P.length-1];pen.halo(x,y,8,'gold',.9);pen.dot(x,y,2.4,'gold',1)}
+      text(pen,'HERO EQUITY',pen.wallQuad('i',1.3,1.3,.01,.01,.1)[0],8,{wall:'i',tone:.6});
+      text(pen,money(RUN.start_cash),pen.wallQuad('i',5.1,1.26,.01,.01,.1)[0],7,{wall:'i',tone:.45})}
+    // the lineage as portraits: oldest on the left, the hero last and lit
+    if(h){const chain=[...h.ancestors,h.id].slice(-4);
+      chain.forEach((id,k)=>{const last=k===chain.length-1,u=.55+(chain.length-1-k)*1.2;
+        const frame=pen.wallQuad('j',u,1.55,.95,1.05,.06);
+        pen.shape(frame,[last?'gold':'slate',last?.16:.12],{w:last?1.5:1,line:last?'gold':'ghost'});
+        const [cx,cy]=pen.wallQuad('j',u+.47,2.25,.01,.01,.1)[0];
+        const ink=last?'gold':'cyan';
+        pen.shape(pen.circle(cx,cy,7,14),[ink,last?.9:.45],{line:false});
+        pen.shape(pen.circle(cx-5,cy-3,3.4,10),[ink,1],{line:false});pen.shape(pen.circle(cx+5,cy-3,3.4,10),[ink,1],{line:false});
+        text(pen,id.replace(/^(real|scrambled)-/,''),pen.wallQuad('j',u+.9,1.72,.01,.01,.1)[0],7,{wall:'j',ink:last?'gold':'ghost',tone:last?1:.6,w:.8})});
+      text(pen,'THE LINEAGE',pen.wallQuad('j',.55+chain.length*1.2,3.1,.01,.01,.1)[0],9,{wall:'j',tone:.6})}
+    pen.rug(1.6,3.2,3.8,3,{ink:'slate',tone:.14,border:'slate'});
+    pen.glow(3.3,4.2,.02,1.9,'gold',.4);
+    pen.lamp(1.2,3.1,{t});
+    pen.table(2.6,3.9,2.4,1.5,.75,{ink:'slate',tone:.34});
+    pen.books(4.4,4.1,.76,2);
+    if(h){pen.fly(3.3,4.6,.76,{t,pose:'sit',ink:'gold',scale:1.55,phase:.6,glowStrength:1.6,noShadow:true});
+      const [sx,sy]=p(5.3,2.2,.02);
+      pen.shape([[sx-6,sy],[sx+98,sy],[sx+98,sy-58],[sx-6,sy-58]],['slate',.14],{w:1.3,line:'gold'});
+      text(pen,h.id,[sx+2,sy-51],11,{ink:'gold',w:1.1});
+      text(pen,(h.origin==='newcomer'?'NEWCOMER':h.origin==='founder'?'FOUNDER':'CHILD')+' · GEN '+h.born,[sx+2,sy-35],7.5,{tone:.7});
+      text(pen,h.generations_lived+(h.generations_lived===1?' GEN':' GENS')+' ALIVE',[sx+2,sy-23],7.5,{tone:.7});
+      text(pen,money(h.equity),[sx+2,sy-4],13,{ink:'gold',w:1.3})}
+    pen.chair(2.9,5.3,{back:'i',ink:'slate',tone:.35});
+  }});
+
+/* =====================  THE PILE  =====================
+   Every fly selection has eliminated, generation after generation. It only ever grows. */
+room({id:'pile',col:2,row:1,w:7,d:7,h:3,
+  style:{floor:['slate',.24],wall:['slate',.1],wall2:['slate',.13],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,total=eliminatedBefore(GEN);
+    const radius=Math.min(2.7,.35+Math.sqrt(total)*.055),ci=3.6,cj=3.8;
+    pen.shade(pen.ellipse(ci,cj,0,radius*1.05,radius*.95,30),.5);
+    // the heap: a cone of the fallen, real and scrambled together, capped for the frame budget
+    const shown=Math.min(total,900),H=stream('heap');
+    const pts=[];
+    for(let k=0;k<shown;k++){const a=rand(H,0,TAU),r=radius*Math.sqrt(rand(H,0,1));
+      const z=(1-r/Math.max(radius,1e-6))*radius*.55+rand(H,0,.05),tribe=H()<.5?'real':'scrambled';
+      pts.push([ci+Math.cos(a)*r,cj+Math.sin(a)*r,z,tribe,rand(H,0,TAU)])}
+    pts.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1]));
+    for(const [i,j,z,tribe,rot] of pts){const [x,y]=p(i,j,z);pen.deadfly(x,y,.9,TRIBE_INK[tribe],.5,rot)}
+    const [hx,hy]=p(ci,cj,radius*.55+.1);
+    text(pen,'THE PILE',pen.wallQuad('i',1.2,2.25,.01,.01,.08)[0],18,{wall:'i',w:1.5});
+    text(pen,total.toLocaleString('en-US')+' ELIMINATED',pen.wallQuad('i',1.2,1.7,.01,.01,.08)[0],12,{wall:'i',ink:'ghost',tone:.85});
+    text(pen,'BOTTOM 80% OF EVERY GENERATION',pen.wallQuad('i',1.2,1.28,.01,.01,.08)[0],7.5,{wall:'i',tone:.55});
+    if(total===0)textCentred(pen,'NOTHING HAS FALLEN YET',[hx,hy-10],9,{tone:.6});
+    pen.fly(5.9,5.6,0,{t,pose:'stand',ink:'slate',scale:1.2,facing:-1,phase:2.1});
+    const [bx,by]=p(5.5,5.4,0);pen.line([[bx,by],[bx-18,by-40]],'ghost',1.4,{tone:.6});
+    pen.shape([[bx-22,by-40],[bx-12,by-44],[bx-15,by-52],[bx-25,by-48]],['slate',.4],{w:.8});
+  }});
+
+/* =====================  PLAYBACK  =====================
+   Generations advance on one clock; the camera flies room to room on another, so a short run
+   still tours every room. Scrubbing pauses both. */
+const MS_PER_GEN=1500, MS_PER_ROOM=5200;
+const TOUR=['lab','brain','floor','hero','pile','vault'];
+const NAMES={lab:'the lab',brain:'brain room',floor:'trading floor',hero:"hero's desk",pile:'the pile',vault:'the vault'};
+const VERTICAL=qs.has('vertical');
+const ui={play:document.getElementById('play'),scrub:document.getElementById('scrub'),label:document.getElementById('label'),
+          stat:document.getElementById('stat'),rooms:document.getElementById('rooms'),terminal:document.getElementById('terminal'),
+          inset:document.getElementById('inset')};
+let lastGen=0,lastRoom=0,tourAt=0;
+const roomById=id=>ROOMS.find(r=>r.id===id);
+function goToRoom(id,ms=1400){const r=roomById(id);if(!r)return;tourAt=TOUR.indexOf(id);flyTo(framing(r.bounds),ms);
+  for(const b of ui.rooms.children)b.classList.toggle('on',b.dataset.room===id)}
+function paint(){
+  if(!RUN)return;const f=F(),real=f.tribes.real,scr=f.tribes.scrambled,bh=RUN.competitor_results.buy_and_hold;
+  ui.scrub.value=GEN;ui.label.textContent=`generation ${f.generation} / ${RUN.generations-1}`;
+  ui.stat.innerHTML=`<span class="real">real</span> best ${money(real.equity.best)} · median ${money(real.equity.median)} &nbsp;|&nbsp; `+
+    `<span class="scr">scrambled</span> best ${money(scr.equity.best)} · median ${money(scr.equity.median)} &nbsp;|&nbsp; `+
+    `buy &amp; hold ${money(bh.final_equity)} &nbsp;|&nbsp; ${eliminatedBefore(GEN).toLocaleString('en-US')} eliminated so far`+
+    (RUN.fake?' &nbsp;·&nbsp; FAKE DATA':'');
+  ui.play.textContent=PLAYING?'pause':'play';lastCam='';
+}
+function setGeneration(g){if(!RUN)return;GEN=clamp(Math.round(g),0,RUN.generations-1);paint()}
+function tick(now){
+  if(PLAYING&&RUN){
+    if(now-lastGen>=MS_PER_GEN){lastGen=now;setGeneration(GEN+1>=RUN.generations?0:GEN+1)}
+    if(now-lastRoom>=MS_PER_ROOM&&!tween){lastRoom=now;goToRoom(TOUR[(tourAt+1)%TOUR.length],2600)}
+  }
+  requestAnimationFrame(tick);
+}
+function openTerminal(on){
+  ui.inset.classList.toggle('open',on);ui.terminal.classList.toggle('on',on);
+  const frame=ui.inset.querySelector('iframe');
+  if(on&&!frame.dataset.loaded){frame.dataset.loaded='1';
+    if(window.__HEDGEFLY_TERMINAL__)frame.srcdoc=window.__HEDGEFLY_TERMINAL__;          // the standalone file
+    else frame.src='../terminal/index.html?data='+encodeURIComponent(qs.get('data')||'../hq/runs.json')}
+}
+function wireUI(){
+  ui.play.onclick=()=>{PLAYING=!PLAYING;lastGen=lastRoom=performance.now();paint()};
+  ui.scrub.oninput=e=>{PLAYING=false;setGeneration(+e.target.value)};
+  ui.terminal.onclick=()=>openTerminal(!ui.inset.classList.contains('open'));
+  for(const id of TOUR){const b=document.createElement('button');b.textContent=NAMES[id];b.dataset.room=id;
+    b.onclick=()=>{PLAYING=false;paint();goToRoom(id)};ui.rooms.appendChild(b)}
+  addEventListener('keydown',e=>{
+    if(e.key===' '){PLAYING=!PLAYING;lastGen=lastRoom=performance.now();paint();e.preventDefault()}
+    else if(e.key==='['){PLAYING=false;setGeneration(GEN-1)}
+    else if(e.key===']'){PLAYING=false;setGeneration(GEN+1)}
+    else if(e.key==='t')openTerminal(!ui.inset.classList.contains('open'));
+  });
+}
+async function loadRun(){
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;                              // inlined by build_standalone.mjs
+  const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+  if(!r.ok)throw new Error('runs.json: '+r.status);
+  return r.json();
+}
+async function boot(){
+  if(VERTICAL)document.body.classList.add('vertical');
+  try{RUN=await loadRun()}catch(e){console.error(e);ui.stat.textContent='no run data: serve visuals/ over http, or open visuals/dist/hedgefly.html';return}
+  if(RUN.contract_version!==2){ui.stat.textContent=`this page reads data contract v2; the file is v${RUN.contract_version||1}`;return}
+  ui.scrub.max=RUN.generations-1;
+  GEN=clamp(+(qs.get('gen')||0),0,RUN.generations-1);
+  PLAYING=qs.get('play')!=='0'&&!qs.has('still');
+  wireUI();paint();start();
+  const first=qs.get('room');if(first)goToRoom(first,0);else if(PLAYING)goToRoom(TOUR[0],0);
+  if(qs.has('terminal'))openTerminal(true);
+  lastGen=lastRoom=performance.now();requestAnimationFrame(tick);
+}
+boot();
+</script>
+</body></html>
