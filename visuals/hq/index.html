@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Natural Selection Capital HQ</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#f3ebdd;overscroll-behavior:none}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:none}
+  #stage.drag{cursor:grabbing}
+  #ui{position:fixed;left:0;right:0;bottom:0;padding:10px 14px 12px;display:flex;flex-wrap:wrap;
+      align-items:center;gap:10px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#3d5588;
+      background:linear-gradient(to top,rgba(243,235,221,.97),rgba(243,235,221,.82));
+      border-top:1.5px solid #3d5588;user-select:none}
+  #ui button{font:inherit;color:#3d5588;background:#f3ebdd;border:1.5px solid #3d5588;border-radius:2px;
+      padding:3px 10px;cursor:pointer}
+  #ui button:hover{background:#ffe800}
+  #play{min-width:64px;font-weight:700}
+  #scrub{flex:1 1 220px;min-width:160px;accent-color:#f15060;height:20px}
+  #label{min-width:150px}
+  #rooms{display:flex;gap:6px;flex-wrap:wrap}
+  #stat{flex-basis:100%;color:#3d5588;opacity:.85;font-size:12px}
+  @media (max-width:640px){#label{min-width:0}#stat{font-size:11px}}
+</style>
+</head><body>
+<canvas id="stage" aria-label="Natural Selection Capital HQ, an isometric risograph world"></canvas>
+<div id="ui">
+  <button id="play">pause</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
+  <span id="label">generation 0</span>
+  <span id="rooms"></span>
+  <div id="stat"></div>
+</div>
+<script>
+'use strict';
+/* =====================================================================
+   ENGINE — the print look, the pen, the camera. Scenes live at the bottom.
+   ===================================================================== */
+const TAU=Math.PI*2;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+const ease=u=>u<.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2;
+
+/* ---------- seeded randomness: same keys -> same numbers, every frame ---------- */
+function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function mulberry(a){return()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function stream(...keys){let h=0x9E3779B9;for(const k of keys){h=Math.imul(h^hashStr(String(k)),0x85EBCA6B);h^=h>>>13}const r=mulberry(h>>>0);r();r();return r}
+const rand=(R,a,b)=>a+R()*(b-a);
+const randi=(R,a,b)=>Math.floor(rand(R,a,b+1));
+const pick=(R,arr)=>arr[Math.floor(R()*arr.length)];
+function hash2(x,y,s){let h=Math.imul(x|0,374761393)+Math.imul(y|0,668265263)+Math.imul(s|0,1442695041);h=Math.imul(h^h>>>13,1274126177);return((h^h>>>16)>>>0)/4294967296}
+function noise(x,y,s=0){const xi=Math.floor(x),yi=Math.floor(y),u=x-xi,v=y-yi,a=u*u*(3-2*u),b=v*v*(3-2*v);
+  return lerp(lerp(hash2(xi,yi,s),hash2(xi+1,yi,s),a),lerp(hash2(xi,yi+1,s),hash2(xi+1,yi+1,s),a),b)*2-1}
+
+/* ---------- polyline helpers ---------- */
+function resample(P,step){
+  const out=[P[0].slice()];let need=step;
+  for(let n=1;n<P.length;n++){let x0=P[n-1][0],y0=P[n-1][1];const x1=P[n][0],y1=P[n][1];let d=Math.hypot(x1-x0,y1-y0);
+    while(d>=need&&d>0){const t=need/d;x0+=(x1-x0)*t;y0+=(y1-y0)*t;out.push([x0,y0]);d-=need;need=step}need-=d}
+  const L=P[P.length-1],E=out[out.length-1];if(Math.hypot(L[0]-E[0],L[1]-E[1])>step*.25)out.push(L.slice());
+  return out}
+function smooth(P,closed=false,it=2){let p=P;
+  for(let k=0;k<it;k++){const q=[],n=p.length;if(!closed)q.push(p[0]);
+    for(let i=0;i<(closed?n:n-1);i++){const a=p[i],b=p[(i+1)%n];q.push([a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75])}
+    if(!closed)q.push(p[n-1]);p=q}
+  return p}
+
+/* ---------- isometric projection: i runs right-down, j runs left-down, z up ---------- */
+const TW=64,TH=32,TZ=32;
+const iso=(i,j,z=0)=>[(i-j)*TW/2,(i+j)*TH/2-z*TZ];
+
+/* ---------- inks (real Riso drum colours) ---------- */
+const PAPER=[243,235,221];
+const INKS={
+  blue:[61,85,136],     // Federal Blue — linework, shadows, night
+  coral:[241,80,96],    // Bright Red — warm objects, skin at low tone
+  yellow:[255,232,0],   // Yellow — light, glow, highlights
+  teal:[0,131,138],     // Teal — plants, water, glass
+};
+const ANGLE={blue:15,coral:75,yellow:0,teal:45};   // halftone screen angles (moiré is the point)
+const MISREG=1.1;                                   // plate misregistration in world px
+const css=(c,a=1)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const PAPER_CSS=css(PAPER);
+
+/* ---------- halftone screens ---------- */
+const SS=4,CELL=2.3,TILE_N=8,LEVELS=16;   // CELL = dot pitch in world px
+const tiles=new Map();
+function halftoneTile(ink,level){
+  const key=ink+'|'+level;let cv=tiles.get(key);if(cv)return cv;
+  const cell=CELL*SS,size=cell*TILE_N,tone=level/LEVELS,salt=hashStr(ink)%9973;
+  cv=document.createElement('canvas');cv.width=cv.height=size;
+  const c=cv.getContext('2d');c.fillStyle=css(INKS[ink]);
+  if(level>=LEVELS)c.fillRect(0,0,size,size);
+  else if(tone<=.5){                                  // growing dots
+    for(let y=0;y<TILE_N;y++)for(let x=0;x<TILE_N;x++){
+      const r=cell*Math.sqrt(tone/Math.PI)*(.9+hash2(x,y,salt+level)*.18);
+      const jx=(hash2(x,y,salt)-.5)*.08*cell,jy=(hash2(y,x,salt)-.5)*.08*cell;
+      c.beginPath();c.arc((x+.5)*cell+jx,(y+.5)*cell+jy,r,0,TAU);c.fill()}
+  }else{                                              // solid with shrinking holes
+    c.fillRect(0,0,size,size);c.globalCompositeOperation='destination-out';
+    for(let y=0;y<=TILE_N;y++)for(let x=0;x<=TILE_N;x++){
+      const r=cell*Math.sqrt((1-tone)/Math.PI)*(.9+hash2(x%TILE_N,y%TILE_N,salt+level)*.18);
+      c.beginPath();c.arc(x*cell,y*cell,r,0,TAU);c.fill()}
+  }
+  c.globalCompositeOperation='destination-out';       // worn-drum specks
+  const R=stream('speck',ink,level),n=size*size/260;
+  for(let k=0;k<n;k++){const s=rand(R,1,3.4);c.globalAlpha=rand(R,.25,.9);c.fillRect(R()*size,R()*size,s,s)}
+  tiles.set(key,cv);return cv}
+const screens=new WeakMap();
+function screen(ctx,ink,tone,dx,dy){
+  let bank=screens.get(ctx);if(!bank)screens.set(ctx,bank=new Map());
+  const level=clamp(Math.round(tone*LEVELS),1,LEVELS),key=`${ink}|${level}|${dx.toFixed(2)}|${dy.toFixed(2)}`;
+  let pat=bank.get(key);if(pat)return pat;
+  pat=ctx.createPattern(halftoneTile(ink,level),'repeat');
+  pat.setTransform(new DOMMatrix().translateSelf(dx,dy).rotateSelf(ANGLE[ink]||0).scaleSelf(1/SS));
+  bank.set(key,pat);return pat}
+
+/* ---------- paper grain ---------- */
+let grainPattern=null;
+function grain(ctx){
+  if(grainPattern)return grainPattern;
+  const cv=document.createElement('canvas');cv.width=cv.height=384;const c=cv.getContext('2d'),R=stream('grain');
+  for(let k=0;k<2600;k++){c.fillStyle=css(INKS.blue,rand(R,.03,.11));const s=rand(R,.6,1.8);c.fillRect(R()*384,R()*384,s,s)}
+  for(let k=0;k<120;k++){c.strokeStyle=css(pick(R,[INKS.coral,INKS.blue]),rand(R,.04,.09));c.lineWidth=.6;const x=R()*384,y=R()*384,a=R()*TAU,l=rand(R,4,12);
+    c.beginPath();c.moveTo(x,y);c.quadraticCurveTo(x+Math.cos(a+.6)*l*.5,y+Math.sin(a+.6)*l*.5,x+Math.cos(a)*l,y+Math.sin(a)*l);c.stroke()}
+  return grainPattern=ctx.createPattern(cv,'repeat')}
+
+/* =====================================================================
+   THE PEN — every mark goes through here. Points are screen-space [x,y]
+   arrays; pen.p(i,j,z) turns room coordinates into them.
+   ===================================================================== */
+function makePen(ctx,opt={}){
+  const ox=opt.ox||0,oy=opt.oy||0,boil=opt.boil||0,variant=boil%3;
+  const plate={};for(const k in INKS){const J=stream('plate',k,variant);plate[k]=[rand(J,-1,1)*MISREG,rand(J,-1,1)*MISREG]}
+  const pen={ctx,boil,ox,oy};
+  const p=pen.p=(i,j,z=0)=>{const q=iso(i,j,z);return [q[0]+ox,q[1]+oy]};
+  const trace=(P,dx=0,dy=0)=>{ctx.beginPath();for(let n=0;n<P.length;n++){const x=P[n][0]+dx,y=P[n][1]+dy;n?ctx.lineTo(x,y):ctx.moveTo(x,y)}};
+  const withInk=(ink,tone,fn)=>{if(!INKS[ink])ink='blue';const [dx,dy]=plate[ink];
+    ctx.globalCompositeOperation='multiply';fn(screen(ctx,ink,tone,dx,dy),dx,dy);ctx.globalCompositeOperation='source-over'};
+
+  /* --- fills --- */
+  pen.knock=(P,a=1)=>{if(P.length<3)return;trace(P);ctx.closePath();ctx.fillStyle=a===1?PAPER_CSS:css(PAPER,a);ctx.fill()};
+  pen.tint=(P,ink,tone=1)=>{if(tone<=0||P.length<3)return;withInk(ink,tone,(st,dx,dy)=>{trace(P,dx,dy);ctx.closePath();ctx.fillStyle=st;ctx.fill()})};
+  pen.fill=(P,ink,tone=1)=>{pen.knock(P);if(ink&&ink!=='paper')pen.tint(P,ink,tone)};
+
+  /* --- the hand-drawn line --- */
+  pen.line=(P,ink='blue',w=1.3,o={})=>{
+    if(!P||P.length<2)return;
+    const src=o.closed?[...P,P[0]]:P;
+    let Q=resample(src,Math.max(2.5,w*1.5));if(Q.length<2)return;
+    const amp=o.amp??(.35+w*.15);
+    if(amp>0){
+      const seed=(hash2(Math.round(src[0][0]*3),Math.round(src[0][1]*3),boil*7+1)*1e6)|0;let s=0;
+      Q=Q.map((q,n)=>{if(n)s+=Math.hypot(q[0]-Q[n-1][0],q[1]-Q[n-1][1]);
+        return [q[0]+noise(s*.045,.5,seed)*amp+(hash2(n,seed,1)-.5)*amp*.3,q[1]+noise(s*.045,7.5,seed)*amp+(hash2(seed,n,2)-.5)*amp*.3]});
+      if(o.closed)Q[Q.length-1]=Q[0].slice();
+    }
+    withInk(ink,o.tone??1,(st,dx,dy)=>{ctx.strokeStyle=st;ctx.lineWidth=w;ctx.lineCap=o.cap||'round';ctx.lineJoin='round';
+      if(o.dash)ctx.setLineDash(o.dash);trace(Q,dx,dy);ctx.stroke();if(o.dash)ctx.setLineDash([])});
+  };
+  pen.shape=(P,fill,o={})=>{if(fill)pen.fill(P,fill[0],fill[1]);if(o.line!==false)pen.line(P,o.line||'blue',o.w??1.2,{closed:true,amp:o.amp,tone:o.lineTone})};
+  pen.dot=(x,y,r,ink='blue',tone=1)=>pen.tint(pen.circle(x,y,r,10),ink,tone);
+
+  /* --- geometry (all return point arrays) --- */
+  pen.floorQuad=(i,j,w,d,z=0)=>[p(i,j,z),p(i+w,j,z),p(i+w,j+d,z),p(i,j+d,z)];
+  pen.wallQuad=(wall,u,z,w,h,off=.02)=>{const W=(a,zz)=>wall==='i'?p(u+a,off,zz):p(off,u+a,zz);return [W(0,z),W(w,z),W(w,z+h),W(0,z+h)]};
+  pen.ellipse=(ci,cj,z,ri,rj=ri,n=28)=>Array.from({length:n},(_,k)=>{const a=k/n*TAU;return p(ci+Math.cos(a)*ri,cj+Math.sin(a)*rj,z)});
+  pen.circle=(x,y,r,n=18)=>Array.from({length:n},(_,k)=>[x+Math.cos(k/n*TAU)*r,y+Math.sin(k/n*TAU)*r]);
+  pen.blob=(x,y,rx,ry,key='blob',lump=.22,n=9)=>{const R=stream('blob',key),P=[];
+    for(let k=0;k<n;k++){const a=k/n*TAU+rand(R,-.2,.2),m=1+rand(R,-lump,lump);P.push([x+Math.cos(a)*rx*m,y+Math.sin(a)*ry*m])}
+    return smooth(P,true,3)};
+  pen.leaf=(a,b,wid)=>{const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2,dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*wid,ny=dx/L*wid;
+    return smooth([a,[mx+nx,my+ny],b,[mx-nx,my-ny]],true,2)};
+
+  /* --- solids --- */
+  pen.box=(i,j,z,w,d,h,o={})=>{
+    const ink=o.ink||'coral',tone=o.tone??.5;
+    if(o.shadow!==false)pen.tint(pen.floorQuad(i+.12,j+.18,w,d,z),'blue',.3);
+    const top=pen.floorQuad(i,j,w,d,z+h);
+    const faceJ=[p(i,j+d,z),p(i+w,j+d,z),p(i+w,j+d,z+h),p(i,j+d,z+h)];   // lower-left face
+    const faceI=[p(i+w,j,z),p(i+w,j+d,z),p(i+w,j+d,z+h),p(i+w,j,z+h)];   // lower-right face
+    pen.fill(faceJ,o.leftInk||ink,o.left??clamp(tone+.3,0,1));
+    pen.fill(faceI,o.rightInk||ink,o.right??clamp(tone+.15,0,1));
+    pen.fill(top,o.topInk||ink,o.top??tone);
+    if(o.line!==false){const lw=o.w??1.1;for(const F of[faceJ,faceI,top])pen.line(F,'blue',lw,{closed:true})}
+    return {top,faceI,faceJ}};
+
+  /* --- the room shell --- */
+  pen.shell=(r)=>{
+    const {w,d,h}=r,st=r.style||{},T=.25;
+    const [fi,ft]=st.floor||['blue',.65],[wi,wt]=st.wall||['coral',.3],[wi2,wt2]=st.wall2||[wi,Math.min(1,wt+.12)];
+    const sideJ=[p(-T,d,0),p(w,d,0),p(w,d,-.5),p(-T,d,-.5)],sideI=[p(w,-T,0),p(w,d,0),p(w,d,-.5),p(w,-T,-.5)];
+    pen.shape(sideJ,[fi,Math.min(1,ft+.25)]);pen.shape(sideI,[fi,Math.min(1,ft+.12)]);
+    pen.shape(pen.floorQuad(-T,-T,w+T,d+T,0),[fi,ft],{w:1.4});
+    if(st.planks!==false)for(let a=st.plank||.8;a<d;a+=st.plank||.8)pen.line([p(0,a,0),p(w,a,0)],'blue',.6,{tone:.9,amp:.25});
+    if(h>0){
+      pen.shape(pen.wallQuad('j',0,0,d,h,0),[wi2,wt2]);
+      pen.shape(pen.wallQuad('i',0,0,w,h,0),[wi,wt]);
+      pen.shape([p(w,-T,0),p(w,0,0),p(w,0,h),p(w,-T,h)],[wi,Math.min(1,wt+.3)]);
+      pen.shape([p(-T,d,0),p(0,d,0),p(0,d,h),p(-T,d,h)],[wi2,Math.min(1,wt2+.3)]);
+      pen.shape([p(-T,-T,h),p(w,-T,h),p(w,0,h),p(0,0,h),p(0,d,h),p(-T,d,h)],['paper',0]);
+      pen.line([p(0,d,.12),p(0,0,.12),p(w,0,.12)],'blue',.8,{tone:.8});
+    }};
+
+  /* --- furniture & props --- */
+  pen.table=(i,j,w,d,h=.75,o={})=>{const ink=o.ink||'coral',tone=o.tone??.55,L=.12;
+    pen.tint(pen.floorQuad(i+.2,j+.25,w,d,0),'blue',.3);
+    for(const [a,b] of [[i,j],[i+w-L,j],[i,j+d-L],[i+w-L,j+d-L]])pen.box(a,b,0,L,L,h-.1,{ink,tone:tone+.2,shadow:false,w:.8});
+    pen.box(i-.05,j-.05,h-.1,w+.1,d+.1,.1,{ink,tone,shadow:false});
+    return p(i+w/2,j+d/2,h)};
+  pen.chair=(i,j,o={})=>{const ink=o.ink||'yellow',tone=o.tone??.7,L=.07;
+    pen.tint(pen.floorQuad(i+.1,j+.15,.5,.5,0),'blue',.3);
+    for(const [a,b] of [[i,j],[i+.5-L,j],[i,j+.5-L],[i+.5-L,j+.5-L]])pen.box(a,b,0,L,L,.4,{ink:'blue',tone:.8,shadow:false,w:.6});
+    if(o.back==='j')pen.box(i,j,.45,.5,.07,.55,{ink,tone,shadow:false,w:.9});
+    else pen.box(i,j,.45,.07,.5,.55,{ink,tone,shadow:false,w:.9});
+    pen.box(i,j,.4,.5,.5,.06,{ink,tone,shadow:false,w:.9})};
+  pen.rug=(i,j,w,d,o={})=>{const ink=o.ink||'teal',tone=o.tone??.45;
+    pen.shape(pen.floorQuad(i,j,w,d,.01),[ink,tone],{w:1});
+    pen.line(pen.floorQuad(i+.3,j+.3,w-.6,d-.6,.01),o.border||'coral',1.1,{closed:true,tone:.8});
+    for(let a=.1;a<d;a+=.18){pen.line([p(i,j+a,0),p(i-.2,j+a,0)],ink,.6,{amp:.1});pen.line([p(i+w,j+a,0),p(i+w+.2,j+a,0)],ink,.6,{amp:.1})}};
+  pen.bookcase=(wall,u,wid,hgt,o={})=>{
+    const R=stream('shelf',wall,u),rows=o.rows||4,dep=o.depth||.45,ink=o.ink||'coral';
+    const [bi,bj,bw,bd]=wall==='i'?[u,0,wid,dep]:[0,u,dep,wid];
+    pen.box(bi,bj,0,bw,bd,hgt,{ink,tone:.65});
+    const F=(a,z)=>wall==='i'?p(u+a,dep,z):p(dep,u+a,z);
+    const rowH=(hgt-.2)/rows;
+    for(let r=0;r<rows;r++){const z0=.12+r*rowH,z1=z0+rowH-.08;
+      pen.fill([F(.08,z0),F(wid-.08,z0),F(wid-.08,z1),F(.08,z1)],'blue',.85);
+      let a=.1;
+      while(a<wid-.18){const bw_=rand(R,.07,.14),bh=(z1-z0)*rand(R,.62,.95);
+        if(R()<.07){a+=rand(R,.12,.3);continue}
+        const q=[F(a,z0),F(a+bw_,z0),F(a+bw_,z0+bh),F(a,z0+bh)];
+        pen.fill(q,pick(R,['coral','yellow','teal','paper','coral','teal']),rand(R,.45,.95));
+        pen.line(q,'blue',.55,{closed:true,amp:.1});a+=bw_+.012}
+      pen.line([F(0,z0),F(wid,z0)],'blue',1.3)}};
+  pen.window=(wall,u,z,wid,hgt,o={})=>{
+    const q=pen.wallQuad(wall,u,z,wid,hgt),W=(a,zz)=>wall==='i'?p(u+a,.02,zz):p(.02,u+a,zz);
+    pen.fill(q,o.sky||'teal',.22);pen.tint(pen.wallQuad(wall,u,z,wid,hgt*.4),'yellow',.3);
+    pen.line(q,'blue',1.8,{closed:true});
+    pen.line([W(wid/2,z),W(wid/2,z+hgt)],'blue',1.1);pen.line([W(0,z+hgt*.55),W(wid,z+hgt*.55)],'blue',1.1);
+    pen.line([W(-.12,z-.03),W(wid+.12,z-.03)],'blue',2.4);
+    if(o.patch!==false)pen.sunPatch(wall,u,z,wid,hgt,o)};
+  pen.sunPatch=(wall,u,z,wid,hgt,o={})=>{const k=o.reach??1.1,s=o.shear??.45,F=(a,b)=>wall==='i'?p(a,b,.01):p(b,a,.01);
+    const q=[F(u+z*s,z*k),F(u+wid+z*s,z*k),F(u+wid+(z+hgt)*s,(z+hgt)*k),F(u+(z+hgt)*s,(z+hgt)*k)];
+    pen.light(q,o.light??.5)};
+  // light can't come from multiply alone: lift the paper first, then print yellow on top
+  pen.light=(P,strength=.5,ink='yellow')=>{pen.knock(P,.35*strength+.1);pen.tint(P,ink,.25+.35*strength)};
+  pen.glow=(i,j,z,r,ink='yellow',strength=.6)=>{for(let k=0;k<4;k++){const E=pen.ellipse(i,j,z,r*(1-k*.22));pen.knock(E,.18*strength);pen.tint(E,ink,strength*(k+1)/4)}};
+  pen.lamp=(i,j,o={})=>{const h=o.h??1.8,t=o.t||0,on=o.on!==false,fl=.85+.15*noise(t*5,0,hashStr(`${i},${j}`)%999);
+    if(on)pen.glow(i,j,0,1.7,'yellow',.55*fl);
+    pen.fill(pen.ellipse(i,j,0,.22),'blue',.7);
+    pen.line([p(i,j,0),p(i,j,h)],'blue',1.5,{amp:.2});
+    const [sx,sy]=p(i,j,h);
+    if(on)pen.light([[sx-7,sy+5],[sx+7,sy+5],[sx+30,sy+h*TZ],[sx-30,sy+h*TZ]],.25*fl);
+    pen.shape([[sx-8,sy+5],[sx+8,sy+5],[sx+4,sy-6],[sx-4,sy-6]],[o.ink||'teal',.8])};
+  pen.plant=(i,j,z=0,o={})=>{const R=stream('plant',i,j),s=o.size||1,ink=o.ink||'teal',t=o.t||0;
+    pen.box(i-.2*s,j-.2*s,z,.4*s,.4*s,.38*s,{ink:o.pot||'coral',tone:.55});
+    const [x,y]=p(i,j,z+.38*s),n=o.leaves||8;
+    for(let k=0;k<n;k++){const a=-Math.PI/2+rand(R,-1.2,1.2),len=rand(R,14,28)*s,sway=Math.sin(t*1.4+k)*1.2;
+      pen.shape(pen.leaf([x,y],[x+Math.cos(a)*len+sway,y+Math.sin(a)*len],rand(R,3.5,6.5)*s),[ink,rand(R,.55,.95)],{w:.8})}};
+  pen.books=(i,j,z,n,o={})=>{const R=stream('books',i,j);let zz=z;
+    for(let k=0;k<n;k++){const th=rand(R,.08,.14),dx=rand(R,-.06,.06);
+      pen.box(i+dx,j+dx*.5,zz,.5,.36,th,{ink:pick(R,['coral','teal','yellow','blue']),tone:rand(R,.4,.8),shadow:k===0,w:.8,top:0});zz+=th}};
+  pen.steam=(x,y,t,o={})=>{for(let k=0;k<(o.n||2);k++){const P=[],ph=t*1.6+k*1.7;
+    for(let s=0;s<=10;s++){const u=s/10;P.push([x+(k-.5)*4+Math.sin(ph*3+u*5)*2.5*u,y-u*(o.h||18)])}
+    pen.line(P,o.ink||'blue',.8,{tone:.55*(1-((t*.8+k*.5)%1)*.5),amp:.2})}};
+  pen.sparkle=(x,y,r,ink='yellow',t=0)=>{const a0=t*1.5,k=.6+.4*Math.sin(t*4+x);
+    for(let q=0;q<4;q++){const a=a0+q*Math.PI/4,rr=r*k*(q%2?.55:1);pen.line([[x-Math.cos(a)*rr,y-Math.sin(a)*rr],[x+Math.cos(a)*rr,y+Math.sin(a)*rr]],ink,1.1,{amp:0})}};
+
+  /* --- people --- */
+  pen.person=(i,j,z=0,o={})=>{
+    const t=o.t||0,s=o.scale||1,f=o.facing===-1?-1:1,pose=o.pose||'stand';
+    const shirt=o.shirt||'teal',pants=o.pants||'blue',hair=o.hair||'blue',skin=o.skin||['coral',.22];
+    const [bx,by]=p(i,j,z),ph=t*TAU*(o.speed||.5)+(o.phase||0);
+    const X=v=>bx+v*s*f,Y=v=>by+v*s;
+    if(!o.noShadow)pen.tint(pen.ellipse(i,j,z,.3,.3,14),'blue',.3);
+    const sit=pose==='sit'||pose==='read',hip=sit?-14:-23,bob=Math.sin(ph*2)*.6,sh=hip-17+bob,lw=3.2*s;
+    if(sit){for(const k of[-2.5,2.5])pen.line([[X(k-2),Y(hip)],[X(k+8),Y(hip+1)],[X(k+8),Y(-1)]],pants,lw,{amp:.15})}
+    else{const sw=pose==='walk'?Math.sin(ph)*5:0;
+      pen.line([[X(-2.5),Y(hip)],[X(-2.5+sw),Y(-1)]],pants,lw,{amp:.15});pen.line([[X(2.5),Y(hip)],[X(2.5-sw),Y(-1)]],pants,lw,{amp:.15})}
+    const arm=(sx,hx,hy)=>pen.line([[X(sx),Y(sh+2.5)],[X((sx+hx)/2+(hx>sx?-1:1)),Y((sh+hy)/2+3)],[X(hx),Y(hy)]],shirt,2.6*s,{amp:.15,tone:.9});
+    if(pose==='walk'){arm(-4,-4-Math.sin(ph)*5,hip-1)}
+    pen.shape(smooth([[X(-6),Y(hip+1)],[X(6),Y(hip+1)],[X(5),Y(sh)],[X(-5),Y(sh)]],true,2),[shirt,.75],{w:1.1*s});
+    if(pose==='read'){arm(-4,7,hip-5);arm(4,9,hip-6);
+      pen.shape([[X(4),Y(hip-12)],[X(12),Y(hip-10)],[X(12),Y(hip-3)],[X(4),Y(hip-5)]],['paper',0],{w:.9})}
+    else if(pose==='reach'){arm(-4,-6,hip);arm(4,13,sh-3+Math.sin(ph)*2)}
+    else if(pose==='wave'){arm(-4,-6,hip);arm(4,10,sh-12+Math.sin(ph*3)*3)}
+    else if(pose==='walk'){arm(4,4+Math.sin(ph)*5,hip-1)}
+    else{arm(-4,-7,hip);arm(4,7,hip)}
+    const hx=X(.5),hy=Y(sh-7),r=5.5*s,head=pen.circle(hx,hy,r,16);
+    pen.fill(head,skin[0],skin[1]);
+    const cap=[];for(let k=0;k<=10;k++){const a=Math.PI+k/10*Math.PI;cap.push([hx+Math.cos(a)*r*1.08-f*.8,hy+Math.sin(a)*r*1.1])}
+    cap.push([hx-f*r*.9,hy+r*.7]);
+    pen.tint(cap,hair,.9);pen.line(head,'blue',1,{closed:true,amp:.2});
+    if(pose!=='read')pen.dot(hx+f*2.6*s,hy+.8,.8,'blue');
+    return {head:[hx,hy],hand:[X(pose==='reach'?13:9),Y(pose==='reach'?sh-3:hip-6)]}};
+
+  return pen;
+}
+
+/* =====================================================================
+   RUNTIME — layout, camera, 12fps boil, input, export
+   ===================================================================== */
+const ROOMS=[];
+function room(def){ROOMS.push({w:10,d:10,h:3,col:0,row:0,...def})}
+const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
+const qs=new URLSearchParams(location.search);
+const FPS=12,BOIL_EVERY=4,GAP=2.5,MIN_Z=.15,MAX_Z=6;
+let W=1,H=1,dpr=1,started=performance.now(),lastFrame=-1,lastCam='';
+const cam={x:0,y:0,zoom:1};let vel={x:0,y:0},tween=null,idleSince=performance.now(),tourIndex=-1;
+
+function layout(){
+  const SLOT=Math.max(...ROOMS.map(r=>Math.max(r.w,r.d)))+GAP;   // grid pitch in tiles
+  for(const r of ROOMS){r.oi=r.col*SLOT;r.oj=r.row*SLOT;[r.ox,r.oy]=iso(r.oi,r.oj);
+    const pts=[];for(const a of[-.5,r.w+.3])for(const b of[-.5,r.d+.3])for(const z of[-1,r.h+.6])pts.push(iso(r.oi+a,r.oj+b,z));
+    r.bounds=[Math.min(...pts.map(q=>q[0])),Math.min(...pts.map(q=>q[1])),Math.max(...pts.map(q=>q[0])),Math.max(...pts.map(q=>q[1]))];}
+  ROOMS.sort((a,b)=>(a.oi+a.oj)-(b.oi+b.oj));
+}
+const framing=b=>({x:(b[0]+b[2])/2,y:(b[1]+b[3])/2,zoom:clamp(Math.min(W/(b[2]-b[0]),H/(b[3]-b[1]))*.92,MIN_Z,MAX_Z)});
+function fitAll(){const b=ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);return framing(b)}
+function flyTo(target,ms=1100){tween={from:{...cam},to:target,start:performance.now(),ms}}
+const toWorld=(sx,sy)=>({x:(sx-W/2)/cam.zoom+cam.x,y:(sy-H/2)/cam.zoom+cam.y});
+function resize(){W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastCam=''}
+
+function draw(frameNo){
+  const t=frameNo/FPS,boil=Math.floor(frameNo/BOIL_EVERY),z=cam.zoom;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,stage.width,stage.height);
+  ctx.setTransform(dpr*z,0,0,dpr*z,dpr*(W/2-cam.x*z),dpr*(H/2-cam.y*z));
+  const a=toWorld(0,0),b=toWorld(W,H);
+  for(const r of ROOMS){
+    if(r.bounds[2]<a.x||r.bounds[0]>b.x||r.bounds[3]<a.y||r.bounds[1]>b.y)continue;
+    const pen=makePen(ctx,{ox:r.ox,oy:r.oy,boil});
+    try{if(r.shell!==false)pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id))}catch(e){console.error('room '+r.id,e)}
+    ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  }
+  ctx.globalCompositeOperation='multiply';ctx.fillStyle=grain(ctx);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
+}
+
+function frame(now){
+  requestAnimationFrame(frame);
+  if(innerWidth!==W||innerHeight!==H)resize();
+  if(tween){const u=clamp((now-tween.start)/tween.ms,0,1),e=ease(u);
+    cam.x=lerp(tween.from.x,tween.to.x,e);cam.y=lerp(tween.from.y,tween.to.y,e);cam.zoom=lerp(tween.from.zoom,tween.to.zoom,e)*(1-Math.sin(u*Math.PI)*.12);
+    if(u>=1)tween=null}
+  else if(!pointers.size){cam.x+=vel.x*16;cam.y+=vel.y*16;vel.x*=.92;vel.y*=.92}
+  if(!qs.has('still')&&ROOMS.length>1&&now-idleSince>20000&&!tween){tourIndex=(tourIndex+1)%ROOMS.length;flyTo(framing(ROOMS[tourIndex].bounds),3200);idleSince=now-8000}
+  const f=qs.has('frame')?+qs.get('frame'):Math.floor((now-started)/1000*FPS);
+  const key=`${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(4)},${W},${H},${GEN}`;
+  if(f!==lastFrame||key!==lastCam){draw(f);lastFrame=f;lastCam=key}
+}
+
+const pointers=new Map();let drag=null,pinch=null;
+const touch=()=>{idleSince=performance.now();tween=null};
+stage.addEventListener('pointerdown',e=>{touch();stage.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});vel={x:0,y:0};
+  drag={x:e.clientX,y:e.clientY,t:performance.now()};
+  if(pointers.size===2){const [p1,p2]=[...pointers.values()];pinch={d:Math.hypot(p1.x-p2.x,p1.y-p2.y),zoom:cam.zoom,anchor:toWorld((p1.x+p2.x)/2,(p1.y+p2.y)/2)}}
+  stage.classList.add('drag')});
+stage.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;touch();pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size>=2&&pinch){const [p1,p2]=[...pointers.values()],mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2;
+    cam.zoom=clamp(pinch.zoom*Math.hypot(p1.x-p2.x,p1.y-p2.y)/Math.max(1,pinch.d),MIN_Z,MAX_Z);cam.x=pinch.anchor.x-(mx-W/2)/cam.zoom;cam.y=pinch.anchor.y-(my-H/2)/cam.zoom;return}
+  if(!drag)return;const now=performance.now(),dx=e.clientX-drag.x,dy=e.clientY-drag.y,dt=Math.max(8,now-drag.t);
+  cam.x-=dx/cam.zoom;cam.y-=dy/cam.zoom;vel={x:lerp(vel.x,-dx/cam.zoom/dt,.6),y:lerp(vel.y,-dy/cam.zoom/dt,.6)};drag={x:e.clientX,y:e.clientY,t:now}});
+const up=e=>{pointers.delete(e.pointerId);pinch=null;if(pointers.size)return;if(!drag||performance.now()-drag.t>90)vel={x:0,y:0};drag=null;stage.classList.remove('drag')};
+stage.addEventListener('pointerup',up);stage.addEventListener('pointercancel',up);
+stage.addEventListener('wheel',e=>{e.preventDefault();touch();vel={x:0,y:0};const a=toWorld(e.clientX,e.clientY);
+  cam.zoom=clamp(cam.zoom*Math.exp(-clamp(e.deltaY,-300,300)*.0015),MIN_Z,MAX_Z);cam.x=a.x-(e.clientX-W/2)/cam.zoom;cam.y=a.y-(e.clientY-H/2)/cam.zoom},{passive:false});
+stage.addEventListener('dblclick',e=>{const w=toWorld(e.clientX,e.clientY),r=ROOMS.find(r=>w.x>=r.bounds[0]&&w.x<=r.bounds[2]&&w.y>=r.bounds[1]&&w.y<=r.bounds[3]);
+  if(r){touch();tourIndex=ROOMS.indexOf(r);flyTo(framing(r.bounds))}});
+addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;const k=e.key.toLowerCase(),step=120/cam.zoom;touch();
+  if(k==='arrowleft'||k==='a')cam.x-=step;else if(k==='arrowright'||k==='d')cam.x+=step;
+  else if(k==='arrowup'||k==='w')cam.y-=step;else if(k==='arrowdown'||k==='s')cam.y+=step;
+  else if(k==='+'||k==='=')cam.zoom=clamp(cam.zoom*1.2,MIN_Z,MAX_Z);else if(k==='-')cam.zoom=clamp(cam.zoom/1.2,MIN_Z,MAX_Z);
+  else if(k==='0')flyTo(fitAll(),900);
+  else if(k==='p')stage.toBlob(b=>{const l=document.createElement('a');l.href=URL.createObjectURL(b);l.download=(document.title||'print')+'.png';l.click()});
+  else return;e.preventDefault()});
+
+function start(){
+  layout();resize();
+  const r=ROOMS.find(r=>r.id===qs.get('room'));
+  Object.assign(cam,r?framing(r.bounds):fitAll());
+  if(qs.has('zoom'))cam.zoom=+qs.get('zoom');
+  requestAnimationFrame(frame);
+}
+
+/* =====================================================================
+   SCENE — edit below. One room() per diorama. Draw back-to-front.
+   ===================================================================== */
+
+/* ---------- hand lettering: a stencil alphabet drawn with the same wobbly pen ----------
+   Glyphs live on a 4 x 6 grid, strokes separated by '|', points as two digits 'xy'.
+   Nothing on screen is a font; the signs are drawn like everything else.            */
+const GLYPHS={
+ A:'062046|1434', B:'0006|003041423303|033344453606', C:'4130100105163645',
+ D:'0006|003041453606', E:'40000646|0333', F:'400006|0333', G:'41301001051636454424',
+ H:'0006|4046|0343', I:'2026|1030|1636', J:'3035261605', K:'0006|0340|0346',
+ L:'000646', M:'0600234046', N:'06004640', O:'103041453616050110',
+ P:'0006|003041423303', Q:'103041453616050110|3546', R:'0006|003041423303|3346',
+ S:'413010010213334445361605', T:'2026|0040', U:'000516364540', V:'002640',
+ W:'0016233640', X:'0046|4006', Y:'0023|4023|2326', Z:'00400646',
+ 0:'103041453616050110|4006', 1:'112026|1636', 2:'01103041420646',
+ 3:'0040234445361605', 4:'36300444', 5:'400003334445361605',
+ 6:'401001051636454433 03'.replace(/ /g,''), 7:'004026', 8:'103041453616050110|0333',
+ 9:'4313030201103041453616', '$':'413010010213334445361605|2027', '%':'0010|4006|3646',
+ '-':'1343', '+':'1343|2125', '.':'2625', ',':'2635', ':':'2221|2524', '/':'4006',
+ '(':'3005 01 36'.replace(/ /g,''), ')':'10450140'.replace(/ /g,''), '*':'2024|0422|4022',
+};
+/* text(pen, 'WORDS', [x,y], size, {ink,tone,w,wall}) - wall 'i'|'j' leans it onto a back wall */
+function text(pen,str,at,size,o={}){
+  const ink=o.ink||'blue',tone=o.tone==null?.9:o.tone,w=o.w||1.1,gap=o.gap==null?.38:o.gap;
+  let ux=[size*.62,0],uy=[0,size];
+  if(o.wall==='i'){ux=[size*.62*Math.cos(.4636),size*.62*Math.sin(.4636)];uy=[0,size]}
+  if(o.wall==='j'){ux=[size*.62*Math.cos(.4636),-size*.62*Math.sin(.4636)];uy=[0,size]}
+  let [cx,cy]=at;
+  for(const ch of String(str).toUpperCase()){
+    const g=GLYPHS[ch];
+    if(g){for(const stroke of g.split('|')){
+      const P=[];
+      for(let k=0;k+1<stroke.length;k+=2)
+        P.push([cx+(+stroke[k]/4)*ux[0]+(+stroke[k+1]/6)*uy[0], cy+(+stroke[k]/4)*ux[1]+(+stroke[k+1]/6)*uy[1]]);
+      if(P.length===1)pen.dot(P[0][0],P[0][1],w*.8,ink,tone);
+      else pen.line(P,ink,w,{tone,amp:.35});
+    }}
+    cx+=ux[0]*(1+gap);cy+=ux[1]*(1+gap);
+  }
+  return [cx,cy];
+}
+const textWidth=(str,size,gap=.38)=>String(str).length*size*.62*(1+gap);
+function textCentred(pen,str,at,size,o={}){return text(pen,str,[at[0]-textWidth(str,size,o.gap)/2,at[1]],size,o)}
+
+/* ---------- the data the whole world replays (visuals/hq/data-contract.md) ---------- */
+let RUN=null,GEN=0,PLAYING=true,LAST_TICK=0;
+const MS_PER_GEN=850, GENS_PER_ROOM=5;
+const TOUR=['lab','brain','floor','hero','vault'];
+const frame0=()=>RUN&&RUN.frames[Math.min(GEN,RUN.frames.length-1)];
+const money=v=>'$'+Math.round(v).toLocaleString('en-US');
+const heroOf=(f,tribe)=>f&&f.heroes&&f.heroes[tribe];
+
+/* a fly: two wings, a body, a head. Used wherever a fly is a character rather than a desk. */
+function fly(pen,x,y,s,t,{ink='blue',tone=.85,phase=0,dead=false}={}){
+  const beat=dead?0:Math.sin(t*9+phase);
+  if(!dead)for(const side of[-1,1])
+    pen.shape(smooth([[x,y-s*.3],[x+side*s*1.5,y-s*(1.1+beat*.35)],[x+side*s*1.9,y-s*.2],[x+side*s*.9,y+s*.05]],true,2),
+      ['teal',.3],{w:.7,lineTone:.5});
+  pen.shape(pen.circle(x,y,s*.85,14),[ink,dead?.35:tone],{w:1});
+  pen.shape(pen.circle(x+s*.75,y-s*.5,s*.5,12),[ink,dead?.3:tone*.8],{w:.9});
+  pen.dot(x+s*.95,y-s*.62,s*.2,'coral',dead?.2:.9);
+  if(!dead){pen.line([[x-s*.3,y+s*.7],[x-s*.5,y+s*1.5]],ink,.6,{tone:.7});
+            pen.line([[x+s*.2,y+s*.75],[x+s*.45,y+s*1.5]],ink,.6,{tone:.7})}
+}
+
+/* a line chart on a back wall, from an array of values. Returns the last point. */
+function chart(pen,wall,u,z,w,h,values,{ink='coral',tone=.9,base=null,upto=null}={}){
+  const n=values.length;if(!n)return null;
+  const lo=Math.min(...values,base==null?Infinity:base),hi=Math.max(...values,base==null?-Infinity:base);
+  const span=Math.max(hi-lo,1e-6);
+  const at=k=>{const q=pen.wallQuad(wall,u+(n<2?0:w*k/(n-1)),z+h*((values[k]-lo)/span),.001,.001,.06);return q[0]};
+  if(base!=null){const b=[];for(let k=0;k<n;k++){const q=pen.wallQuad(wall,u+w*k/(n-1),z+h*((base-lo)/span),.001,.001,.06);b.push(q[0])}
+    pen.line([b[0],b[n-1]],'blue',.7,{tone:.45,dash:[4,4],amp:.2})}
+  const P=[];for(let k=0;k<n;k++)P.push(at(k));
+  const cut=upto==null?n:Math.max(2,Math.min(n,upto+1));
+  pen.line(P.slice(0,cut),ink,1.5,{tone,amp:.25});
+  const tip=P[cut-1];
+  pen.dot(tip[0],tip[1],2.2,ink,1);
+  return tip;
+}
+
+/* =====================  THE LAB  =====================
+   A desk, a DGX Spark humming under a lamp, a jar of flies, and whoever is on shift. */
+room({id:'lab',col:0,row:0,w:7,d:7,h:3,
+  style:{floor:['blue',.62],wall:['yellow',.26],wall2:['coral',.26],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=frame0();
+    const busy=f?Math.min(1,(f.tribes.real.trades.total+f.tribes.scrambled.trades.total)/6000):.4;
+
+    pen.window('j',1.1,1.15,1.9,1.35);
+    // the whiteboard: what this whole building is for
+    pen.shape(pen.wallQuad('i',3.3,.95,3.4,1.75,.05),['paper',0],{w:1.2});
+    text(pen,'REAL',pen.wallQuad('i',3.5,2.36,.01,.01,.11)[0],17,{wall:'i',ink:'teal'});
+    text(pen,'VS',pen.wallQuad('i',3.5,2.02,.01,.01,.11)[0],13,{wall:'i',ink:'blue',tone:.6});
+    text(pen,'SCRAMBLED',pen.wallQuad('i',3.5,1.64,.01,.01,.11)[0],13,{wall:'i',ink:'coral'});
+    if(f)text(pen,'GEN '+f.generation,pen.wallQuad('i',3.5,1.16,.01,.01,.11)[0],14,{wall:'i',ink:'blue',tone:.8});
+
+    pen.rug(1.2,2.6,4.4,3.6,{ink:'teal',tone:.34});
+    pen.glow(3.1,3.2,.78,1.5,'yellow',.5+busy*.35);
+
+    pen.bookcase('i',.4,2.3,2.2,{rows:4,ink:'blue'});
+    pen.plant(6.4,.9,0,{t,size:1.15,pot:'coral'});
+    pen.lamp(.75,4.9,{t,ink:'teal'});
+
+    const desk=pen.table(2.2,2.9,3.4,1.7,.75,{ink:'coral',tone:.5});
+    // the Spark: a small dark slab with a breathing front panel
+    const box=pen.box(2.5,3.05,.75,1.25,.9,.5,{ink:'blue',tone:.82,topInk:'blue',shadow:true});
+    const [fx,fy]=p(2.5,3.9,.9);
+    for(let k=0;k<7;k++)pen.line([[fx+6+k*5,fy-3],[fx+6+k*5,fy-14]],'paper',.9,{amp:.15,tone:.8});
+    const pulse=.55+.45*Math.sin(t*(1.4+busy*3.2));
+    pen.dot(fx+48,fy-8,2.6,'yellow',pulse);
+    pen.dot(fx+48,fy-8,4.6,'yellow',pulse*.35);
+    text(pen,'SPARK',[fx+4,fy-30],7,{ink:'paper',tone:.9,w:.8});
+    // cables down the back of the desk
+    for(let k=0;k<4;k++){const [ax,ay]=p(2.6+k*.22,3.98,.74),[bx,by]=p(2.4+k*.3,4.7,0);
+      pen.line(smooth([[ax,ay],[ax+8,ay+16+k*3],[bx,by]],false,2),'blue',1.5,{tone:.7,amp:.5})}
+
+    // the jar of fruit flies, the actual animals
+    const [jx,jy]=p(4.9,3.2,.76);
+    pen.shape(smooth([[jx-13,jy],[jx+13,jy],[jx+12,jy-34],[jx-12,jy-34]],true,1),['teal',.3],{w:1.1});
+    pen.line([[jx-13,jy-34],[jx+13,jy-34]],'blue',1.4,{tone:.8});
+    for(let k=0;k<7;k++){const a=t*(.7+k*.23)+k,r=4+k*1.6;
+      pen.dot(jx+Math.cos(a*1.7)*r,jy-12-Math.sin(a*2.1)*11,1.15,'blue',.85)}
+    text(pen,'FLIES',[jx-11,jy+11],6.5,{ink:'blue',tone:.7,w:.7});
+
+    pen.books(1.35,3.15,.76,3);
+    const [mx,my]=p(4.1,4.0,.75);
+    pen.shape(smooth([[mx-4,my],[mx+4,my],[mx+4,my-8],[mx-4,my-8]],true,1),['coral',.75],{w:.9});
+    pen.steam(mx,my-10,t,{n:3});
+
+    pen.chair(3.0,5.1,{back:'i',ink:'blue',tone:.55});
+    pen.person(3.25,5.35,0,{pose:'sit',t,shirt:'yellow',hair:'blue',facing:-1,speed:.5});
+    for(let k=0;k<5;k++){const i=rand(R,1.1,2.2),j=rand(R,5.2,6.3);
+      pen.shape([p(i,j,.01),p(i+.4,j+.05,.01),p(i+.36,j+.42,.01),p(i-.04,j+.37,.01)],['paper',0],{w:.6})}
+    pen.sparkle(...p(.75,4.9,2.3),5,'yellow',t);
+  }});
+
+/* =====================  THE BRAIN ROOM  =====================
+   Two connectome sculptures hang side by side: the fly's own wiring, and the shuffle. */
+room({id:'brain',col:1,row:0,w:7,d:7,h:3.4,
+  style:{floor:['blue',.7],wall:['blue',.22],wall2:['teal',.26],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,f=frame0();
+
+    // two plinths
+    for(const [i,j,ink] of[[1.7,4.5,'teal'],[5.1,1.5,'coral']])
+      pen.box(i-.6,j-.6,0,1.2,1.2,.6,{ink:'blue',tone:.6,topInk:ink,shadow:true});
+    pen.glow(1.7,4.5,.02,1.8,'teal',.5);
+    pen.glow(5.1,1.5,.02,1.8,'coral',.45);
+
+    // a sculpture: nodes on a sphere, threads between them, a pulse running the threads
+    function sculpture(ci,cj,cz,radius,ink,tangled,seedKey,speed){
+      const S=stream(seedKey),N=20,nodes=[];
+      for(let k=0;k<N;k++){
+        const a=rand(S,0,TAU),b=Math.acos(rand(S,-1,1)),r=radius*(.55+.45*rand(S,0,1));
+        nodes.push([ci+r*Math.sin(b)*Math.cos(a),cj+r*Math.sin(b)*Math.sin(a),cz+r*Math.cos(b)*.9]);
+      }
+      const edges=[];
+      for(let k=0;k<N;k++){
+        // the real one wires to its neighbours; the scrambled one wires anywhere at all
+        const near=nodes.map((n,m)=>[m,Math.hypot(n[0]-nodes[k][0],n[1]-nodes[k][1],n[2]-nodes[k][2])])
+                        .filter(([m])=>m!==k).sort((a,b)=>a[1]-b[1]);
+        const links=tangled?[randi(S,0,N-1),randi(S,0,N-1)]:[near[0][0],near[1][0]];
+        for(const m of links)edges.push([k,m]);
+      }
+      for(const [a,b] of edges){
+        const A=p(...nodes[a]),B=p(...nodes[b]);
+        pen.line([A,B],ink,.7,{tone:.45,amp:.6});
+      }
+      const wave=(t*speed)%1;
+      for(const [a,b] of edges){
+        const u=((a*7+b*13)%17)/17,d=(wave-u+1)%1;
+        if(d<.12){const A=p(...nodes[a]),B=p(...nodes[b]),k=d/.12;
+          pen.dot(lerp(A[0],B[0],k),lerp(A[1],B[1],k),1.7,'yellow',.95)}
+      }
+      for(const n of nodes){const [x,y]=p(...n);pen.shape(pen.circle(x,y,2.6,10),[ink,.85],{w:.8})}
+      return p(ci,cj,cz+radius);
+    }
+    const heat=f?Math.min(1,f.tribes.real.trades.median/40):.5;
+    const top1=sculpture(1.7,4.5,1.95,1,'teal',false,'real-sculpture',.35+heat*.9);
+    const top2=sculpture(5.1,1.5,1.95,1,'coral',true,'scrambled-sculpture',.35+heat*.9);
+    // hung from the ceiling
+    pen.line([[top1[0],top1[1]],[top1[0],top1[1]-70]],'blue',.8,{tone:.5,amp:.3});
+    pen.line([[top2[0],top2[1]],[top2[0],top2[1]-70]],'blue',.8,{tone:.5,amp:.3});
+
+    textCentred(pen,'REAL',p(1.7,5.5,.02),17,{ink:'teal',w:1.4});
+    textCentred(pen,'SHUFFLED',p(5.1,2.5,.02),14,{ink:'coral',w:1.3});
+    if(f){
+      pen.shape(pen.wallQuad('j',3.2,1.5,3.3,1.55,.05),['paper',0],{w:1.2});
+      text(pen,'166,700',pen.wallQuad('j',6.35,2.92,.01,.01,.11)[0],15,{wall:'j',ink:'blue',tone:.85,w:1.3});
+      text(pen,'NEURONS EACH',pen.wallQuad('j',6.35,2.38,.01,.01,.11)[0],11,{wall:'j',ink:'blue',tone:.6});
+      text(pen,'ONE EYE, SHARED',pen.wallQuad('j',6.35,1.95,.01,.01,.11)[0],11,{wall:'j',ink:'teal',tone:.75});
+    }
+    pen.person(5.9,1.4,0,{pose:'stand',t,shirt:'teal',hair:'blue',facing:-1,speed:.35});
+    pen.box(.4,1.2,0,.7,2.2,.45,{ink:'teal',tone:.5,shadow:true});     // a bench to sit and look
+    pen.person(.75,2.0,.45,{pose:'sit',t,shirt:'coral',hair:'blue',facing:1,speed:.4});
+    pen.plant(6.5,6.2,0,{t,size:1.1,pot:'yellow'});
+    pen.books(5.6,5.4,0,3);
+    for(let k=0;k<6;k++){const i=rand(R,2.6,5.6),j=rand(R,5.4,6.6);
+      pen.shape([p(i,j,.01),p(i+.36,j+.05,.01),p(i+.32,j+.38,.01),p(i-.03,j+.33,.01)],['paper',0],{w:.6})}
+    for(let k=0;k<14;k++)pen.dot(...p(rand(R,.5,6.5),rand(R,.5,6.5),rand(R,1.2,2.8)),1,'yellow',.5);
+  }});
+
+/* =====================  THE TRADING FLOOR  =====================
+   Two wings of desks. One desk seats two flies, one lamp each; a lamp goes out when its
+   fly goes broke. Desk k is the same seat in every generation - the fly in it is not. */
+room({id:'floor',col:0,row:1,w:9,d:8,h:3,
+  style:{floor:['yellow',.3],wall:['blue',.24],wall2:['blue',.2],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=frame0();
+    const WINGS=[{tribe:'real',i0:.7,ink:'teal',label:'REAL'},
+                 {tribe:'scrambled',i0:5.3,ink:'coral',label:'SCRAMBLED'}];
+    const COLS=5,ROWS=10,DI=.62,DJ=.68;
+
+    // the aisle, lit
+    pen.rug(4.1,.6,1.1,6.9,{ink:'blue',tone:.26,border:false});
+    pen.glow(4.6,3.6,.02,2.6,'yellow',.32);
+
+    // wall signs over each wing
+    for(const wing of WINGS){
+      const board=pen.wallQuad('i',wing.i0-.3,1.8,3.1,.92,.06);
+      pen.shape(board,['paper',0],{w:1.3});
+      pen.tint(board,wing.ink,.16);
+      text(pen,wing.label,pen.wallQuad('i',wing.i0-.12,1.96,.01,.01,.13)[0],
+           wing.label.length>6?15:22,{wall:'i',ink:wing.ink,w:1.4});
+    }
+    // the tote board between them
+    if(f){
+      const tote=pen.wallQuad('j',1.1,.3,3.2,1.75,.07);
+      pen.shape(tote,['paper',0],{w:1.4});
+      pen.tint(tote,'yellow',.3);
+      const line=(s,z,ink,size)=>text(pen,s,pen.wallQuad('j',4.15,z,.01,.01,.14)[0],size,{wall:'j',ink,tone:.95,w:1.3});
+      line('GEN '+f.generation,1.92,'blue',15);
+      line('BEST '+money(f.tribes.real.equity.best),1.34,'teal',12);
+      line('DEAD '+(f.tribes.real.broke+f.tribes.scrambled.broke),.86,'coral',12);
+    }
+
+    const desks=[];
+    for(const wing of WINGS)for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++)
+      desks.push({wing,c,r,i:wing.i0+c*DI,j:.85+r*DJ,n:c*ROWS+r});
+    desks.sort((a,b)=>(a.i+a.j)-(b.i+b.j));
+
+    for(const d of desks){
+      const tribe=f&&f.tribes[d.wing.tribe];
+      const pair=tribe?[tribe.flies[d.n*2],tribe.flies[d.n*2+1]]:[null,null];
+      const dead=pair.map(q=>q?q.broke:false);
+      const gone=dead[0]&&dead[1];
+      pen.box(d.i,d.j,0,.44,.34,.2,{ink:'blue',tone:gone?.28:.62,
+        topInk:gone?'blue':d.wing.ink,shadow:!gone,line:true,w:.55});
+      const [dx,dy]=p(d.i+.22,d.j+.17,.2);
+      pair.forEach((q,k)=>{
+        const x=dx+(k?7:-7),y=dy-4-(k?1:0);
+        if(!q||q.broke){pen.dot(x,y,1.5,'blue',.35);return}
+        const flicker=.62+.38*Math.abs(Math.sin(t*1.7+d.n*.7+k*2.1));
+        pen.dot(x,y,1.5,'yellow',flicker);
+        pen.dot(x,y,3.4,'yellow',flicker*.3);
+      });
+      if(gone&&d.n%3===0)pen.line([[dx-6,dy-9],[dx+6,dy-2]],'blue',.7,{tone:.5,amp:.4});
+    }
+
+    // the floor supervisor, pacing the aisle
+    const walk=(t*.16)%1,jj=.9+Math.abs(walk*2-1)*5.4;
+    pen.person(4.6,jj,0,{pose:'walk',t,shirt:'yellow',hair:'blue',facing:walk<.5?1:-1,speed:1.1});
+    pen.plant(8.5,.6,0,{t,size:.95,pot:'teal'});
+    pen.lamp(.35,7.4,{t,ink:'coral'});
+    for(let k=0;k<7;k++){const i=rand(R,4.2,5.0),j=rand(R,.9,7.2);
+      pen.shape([p(i,j,.01),p(i+.34,j+.04,.01),p(i+.3,j+.36,.01),p(i-.03,j+.32,.01)],['paper',0],{w:.6})}
+    pen.books(8.4,6.4,0,3);
+    // the caption sits below the whole room, which in iso means high i AND high j
+    const [capx,capy]=p(8.6,8.6,.02);
+    if(f)textCentred(pen,'THIS DAY MOVED '+(f.window.price_move_pct>=0?'+':'')+f.window.price_move_pct+'%',
+              [capx,capy],15,{ink:f.window.price_move_pct>=0?'teal':'coral',tone:.95,w:1.3});
+    textCentred(pen,'ONE DESK = TWO FLIES, ONE LAMP EACH',[capx,capy+26],9.5,{ink:'blue',tone:.55,w:.9});
+  }});
+
+/* =====================  THE HERO'S DESK  =====================
+   One lineage, watched: its equity generation by generation, and the flies it came from. */
+room({id:'hero',col:1,row:1,w:7,d:7,h:3.2,
+  style:{floor:['blue',.6],wall:['yellow',.3],wall2:['yellow',.24],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=frame0(),hero=heroOf(f,'real');
+
+    // the wall chart: this lineage's best equity, generation by generation
+    pen.shape(pen.wallQuad('i',1.1,1.15,4.6,1.7,.04),['paper',0],{w:1.2});
+    if(RUN){
+      const series=RUN.frames.map(q=>q.heroes.real.equity);
+      chart(pen,'i',1.4,1.55,4,1.15,series,{ink:'coral',base:RUN.start_cash,upto:GEN});
+      text(pen,'HERO EQUITY',pen.wallQuad('i',1.4,1.2,.01,.01,.1)[0],10,{wall:'i',ink:'blue',tone:.7,w:1});
+      text(pen,money(RUN.start_cash),pen.wallQuad('i',4.55,1.2,.01,.01,.1)[0],9,{wall:'i',ink:'blue',tone:.5});
+    }
+    // the family tree: a rail of tags, oldest on the left, the hero last and brightest
+    if(hero){
+      const chain=[...hero.ancestors,hero.id],show=chain.slice(-4);
+      const [rx,ry]=pen.wallQuad('j',.5,2.8,.01,.01,.1)[0];
+      const [ex]=pen.wallQuad('j',.5+show.length*1.05,2.8,.01,.01,.1)[0];
+      pen.line([[rx-6,ry],[ex+6,ry+ (ex-rx)*0]],'blue',1.3,{tone:.7,amp:.2});
+      show.forEach((id,k)=>{
+        const last=k===show.length-1;
+        const [x,y]=pen.wallQuad('j',.6+(show.length-1-k)*1.05,2.75,.01,.01,.1)[0];
+        pen.line([[x,y-2],[x,y+9]],'blue',.7,{tone:.6});
+        pen.shape([[x-17,y+9],[x+17,y+9],[x+17,y+26],[x-17,y+26]],['paper',0],{w:last?1.4:.9});
+        if(last)pen.tint([[x-17,y+9],[x+17,y+9],[x+17,y+26],[x-17,y+26]],'yellow',.45);
+        text(pen,id.replace(/^real-/,''),[x-15,y+13],9,{ink:last?'coral':'blue',tone:last?.95:.65,w:.95});
+      });
+      text(pen,hero.ancestors.length>4?'FAMILY TREE, LAST 4':'FAMILY TREE',
+           pen.wallQuad('j',.6+show.length*1.05,3.12,.01,.01,.1)[0],10,{wall:'j',ink:'blue',tone:.65});
+    }
+
+    pen.rug(1.6,3.2,3.8,3,{ink:'coral',tone:.3});
+    pen.glow(3.3,4.2,.02,1.9,'yellow',.6);
+    pen.bookcase('j',4.6,1.9,2.1,{rows:4,ink:'teal'});
+    pen.lamp(1.2,3.1,{t,ink:'yellow'});
+
+    const top=pen.table(2.6,3.9,2.4,1.5,.75,{ink:'coral',tone:.55});
+    // the fly itself, at work on the desk
+    const [hx,hy]=p(3.2,4.3,.76);
+    fly(pen,hx,hy-13,7,t,{ink:'blue',tone:.9});
+    pen.shape([[hx-26,hy-2],[hx-6,hy-2],[hx-6,hy-16],[hx-26,hy-16]],['paper',0],{w:.9});
+    for(let k=0;k<3;k++)pen.line([[hx-24,hy-13+k*4],[hx-9,hy-13+k*4]],'blue',.5,{tone:.4});
+    if(hero){
+      // a card propped against the lamp, rather than writing on the floor
+      const [sx,sy]=p(5.1,2.3,.02);
+      pen.shape([[sx-6,sy],[sx+92,sy],[sx+92,sy-56],[sx-6,sy-56]],['paper',0],{w:1.3});
+      text(pen,hero.id,[sx+2,sy-50],13,{ink:'coral',tone:.95,w:1.2});
+      text(pen,'BORN GEN '+hero.born,[sx+2,sy-33],9,{ink:'blue',tone:.65});
+      text(pen,hero.generations_lived+' GENS ALIVE',[sx+2,sy-21],9,{ink:'blue',tone:.65});
+      text(pen,money(hero.equity),[sx+2,sy-3],14,{ink:'teal',tone:.95,w:1.3});
+    }
+    pen.books(4.4,4.1,.76,2);
+    pen.chair(2.9,5.2,{back:'i',ink:'blue',tone:.5});
+    pen.sparkle(...p(1.2,3.1,2.3),5,'yellow',t);
+    pen.sparkle(...p(3.3,4.2,1.1),4,'yellow',t+.7);
+  }});
+
+/* =====================  THE VAULT  =====================
+   Six months of candles nobody has seen. It opens in the finale and not before. */
+room({id:'vault',col:2,row:1,w:7,d:7,h:3.2,
+  style:{floor:['blue',.75],wall:['blue',.3],wall2:['teal',.3],planks:false},
+  draw(pen,t,R){
+    const p=pen.p;
+    // the door: a slab on the back-right wall with a wheel in the middle
+    pen.shape(pen.wallQuad('i',1.4,.05,4.2,2.75,.08),['blue',.55],{w:1.5});
+    pen.shape(pen.wallQuad('i',1.7,.25,3.6,2.35,.14),['teal',.45],{w:1.2});
+    const [cx,cy]=pen.wallQuad('i',3.5,1.42,.01,.01,.2)[0];
+    pen.shape(pen.circle(cx,cy,46,26),['blue',.6],{w:1.6});
+    pen.shape(pen.circle(cx,cy,34,22),['paper',0],{w:1.2});
+    const turn=Math.sin(t*.5)*.06;            // it settles, it does not open
+    for(let k=0;k<6;k++){const a=turn+k*TAU/6;
+      pen.line([[cx+Math.cos(a)*7,cy+Math.sin(a)*7],[cx+Math.cos(a)*31,cy+Math.sin(a)*31]],'blue',2.4,{tone:.85});
+      pen.dot(cx+Math.cos(a)*31,cy+Math.sin(a)*31,3,'coral',.8)}
+    pen.shape(pen.circle(cx,cy,8,14),['coral',.8],{w:1.2});
+    textCentred(pen,'LOCKED',[cx,cy+54],22,{ink:'coral',tone:.95,w:1.8});
+    textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'paper',tone:.95,w:1.3});
+    textCentred(pen,'52,915 BARS',[cx,cy-66],11,{ink:'paper',tone:.75,w:1.1});
+
+    // hazard stripes on the floor, a chain, and a guard who is also a fly
+    for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'coral',3,{tone:.55,amp:.2});
+    pen.line([p(1.3,3.8,.02),p(5.7,3.8,.02)],'blue',2.2,{tone:.7,amp:.8});
+    for(let k=0;k<9;k++)pen.dot(...p(1.4+k*.52,3.8,.05),2,'blue',.8);
+    const blink=Math.sin(t*2.2)>.2?.95:.25;
+    pen.dot(...pen.wallQuad('i',3.5,2.95,.01,.01,.2)[0],4.5,'coral',blink);
+    pen.glow(3.5,3.4,.02,2.2,'coral',.18+blink*.12);
+
+    for(const [i,j,h] of[[.6,4.4,.5],[.6,5.1,.35],[1.35,4.5,.4]])
+      pen.box(i,j,0,.7,.6,h,{ink:'teal',tone:.55,shadow:true});
+    text(pen,'2026',p(.75,4.45,.52),9,{ink:'blue',tone:.7});
+    fly(pen,...p(2.3,5.3,.35),5.6,t,{ink:'blue',tone:.85,phase:1.3});
+    pen.person(4.9,5.4,0,{pose:'stand',t,shirt:'teal',hair:'blue',facing:-1,speed:.3});
+    text(pen,'NO FLY HAS SEEN THIS',p(.9,6.4,.02),12,{ink:'blue',tone:.7,w:1.1});
+    pen.lamp(6.3,1.1,{t,ink:'coral'});
+  }});
+
+/* =====================  PLAYBACK  =====================
+   The world replays runs.json: one generation at a time, flying room to room. */
+const ui={bar:document.getElementById('ui'),play:document.getElementById('play'),
+          scrub:document.getElementById('scrub'),label:document.getElementById('label'),
+          stat:document.getElementById('stat'),rooms:document.getElementById('rooms')};
+
+function roomById(id){return ROOMS.find(r=>r.id===id)}
+function goToRoom(id,ms){const r=roomById(id);if(r){tourIndex=ROOMS.indexOf(r);flyTo(framing(r.bounds),ms==null?1400:ms)}}
+
+function paint(){
+  if(!RUN)return;
+  const f=RUN.frames[GEN];
+  ui.scrub.value=GEN;
+  ui.label.textContent='generation '+f.generation+' / '+(RUN.generations-1);
+  const real=f.tribes.real,scr=f.tribes.scrambled;
+  ui.stat.textContent=`real ${money(real.equity.best)} best · ${money(real.equity.median)} median · ${real.broke} dead`
+    +`   |   scrambled ${money(scr.equity.best)} · ${money(scr.equity.median)} · ${scr.broke} dead`
+    +`   |   buy & hold ${money(f.competitors.buy_and_hold)}`;
+  ui.play.textContent=PLAYING?'pause':'play';
+  lastCam='';                                   // the generation changed: redraw even if the camera did not
+}
+
+function setGeneration(g,{user=false}={}){
+  if(!RUN)return;
+  const next=clamp(Math.round(g),0,RUN.generations-1);
+  const moved=next!==GEN;
+  GEN=next;
+  if(!user&&moved&&GEN%GENS_PER_ROOM===0)goToRoom(TOUR[Math.floor(GEN/GENS_PER_ROOM)%TOUR.length],2400);
+  paint();
+}
+
+function tick(now){
+  if(PLAYING&&RUN&&now-LAST_TICK>=MS_PER_GEN){
+    LAST_TICK=now;
+    setGeneration(GEN+1>=RUN.generations?0:GEN+1);
+  }
+  requestAnimationFrame(tick);
+}
+
+function wireUI(){
+  ui.play.onclick=()=>{PLAYING=!PLAYING;LAST_TICK=performance.now();paint();idleSince=performance.now()};
+  ui.scrub.oninput=e=>{PLAYING=false;setGeneration(+e.target.value,{user:true});idleSince=performance.now()};
+  for(const id of TOUR){
+    const b=document.createElement('button');
+    b.textContent=id==='hero'?"hero's desk":id;
+    b.onclick=()=>{goToRoom(id);idleSince=performance.now()};
+    ui.rooms.appendChild(b);
+  }
+  addEventListener('keydown',e=>{
+    if(e.key===' '){PLAYING=!PLAYING;LAST_TICK=performance.now();paint();e.preventDefault()}
+    else if(e.key==='['){PLAYING=false;setGeneration(GEN-1,{user:true})}
+    else if(e.key===']'){PLAYING=false;setGeneration(GEN+1,{user:true})}
+  });
+}
+
+async function boot(){
+  try{
+    const response=await fetch('runs.json',{cache:'no-store'});
+    if(!response.ok)throw new Error('runs.json: '+response.status);
+    RUN=await response.json();
+  }catch(error){
+    console.error(error);
+    ui.stat.textContent='no runs.json - serve this folder over http and run visuals/hq/fake_runs.py';
+    RUN={run_id:'none',generations:1,population:100,start_cash:1000,tribes:['real','scrambled'],
+         frames:[{generation:0,window:{price_move_pct:0},competitors:{buy_and_hold:1000},
+                  tribes:{real:{alive:100,broke:0,equity:{best:1000,median:1000,worst:1000},
+                                trades:{total:0,median:0,max:0},flies:[]},
+                          scrambled:{alive:100,broke:0,equity:{best:1000,median:1000,worst:1000},
+                                     trades:{total:0,median:0,max:0},flies:[]}},
+                  heroes:{real:{id:'real-f00000',born:0,generations_lived:1,ancestors:[],equity:1000},
+                          scrambled:{id:'scrambled-f00000',born:0,generations_lived:1,ancestors:[],equity:1000}}}]};
+  }
+  ui.scrub.max=RUN.generations-1;
+  if(RUN.fake)document.title='Natural Selection Capital HQ (fake data)';
+  GEN=clamp(+(qs.get('gen')||0),0,RUN.generations-1);
+  PLAYING=qs.get('play')!=='0'&&!qs.has('still');
+  wireUI();paint();
+  start();
+  if(qs.has('room'))goToRoom(qs.get('room'),0);
+  LAST_TICK=performance.now();
+  requestAnimationFrame(tick);
+}
+boot();
+
+</script>
+</body></html>
