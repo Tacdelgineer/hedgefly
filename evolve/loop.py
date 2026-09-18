@@ -1,14 +1,20 @@
-"""The evolution loop: two tribes, one window per generation, logged to the last number.
+"""The evolution loop: two tribes, four fixed days, logged to the last number.
 
-Every generation:
-  1. one window of the evolve set is drawn at random, and BOTH tribes trade exactly that window
-     with exactly the same fees, minimum hold and ordering, so the wiring is the only difference;
-  2. the competitors (momentum, random, buy-and-hold) trade it too;
-  3. fitness is log(final equity / start cash), broke flies share the worst;
+Once per run, `windows` non-overlapping days are drawn from the evolve set. Then every
+generation:
+  1. every fly of BOTH tribes trades every one of those same days, with the same fees, minimum
+     hold and ordering, so the wiring is the only difference between the tribes and the genome
+     is the only difference between the flies;
+  2. fitness is the mean log return over the days - the same days every generation, so a
+     genome's score is its own and not the luck of which day it drew;
+  3. the top 20% reproduce and survive unchanged (elitism: the best genomes so far are always
+     in the population); the other 80% are ELIMINATED, which is what dying means now;
   4. the whole generation is written to runs/<run_id>/gen_XXX.json and digested into
      gen_XXX_summary.json (PLAN.md rules 7 and 8);
-  5. the top 20% survive, children are a survivor plus noise, 10% are newcomers, and every
-     child records its parent.
+  5. children are a survivor plus noise, 10% are newcomers, and every child records its parent.
+
+The competitors (momentum, random, buy-and-hold) trade the same days once, at the start: the
+days never change, so neither do they.
 
 The brain is never touched (rule 1); only genomes change (rule 2).
 """
@@ -28,16 +34,17 @@ from nfly import load_malecns
 
 from brain import Genome, TribeAgent, build_eye, scramble
 from brain.agent import MIN_CALIBRATION_CHARTS, STEPS_PER_CANDLE, VOTE_MEMORY
-from market import (FEE_BPS, MIN_HOLD_BARS, START_CASH, WindowResult, Wallet, load_evolve,
+from market import (FEE_BPS, MIN_HOLD_BARS, START_CASH, Wallet, load_evolve,
                     load_split, render_range, trade_window)
 from market.chart import WINDOW
 
 from . import logs
 from .competitors import MOMENTUM_LOOKBACK, run_competitors
-from .population import Lineage, breed, fitness
+from .population import Lineage, breed, fitness_over_windows, survivors_of
 from .seeding import PROBE_BARS, SEED_ROUNDS, seed_population
 
 BARS_PER_WINDOW = 288          # PLAN.md: 1 day of 5-minute bars
+FIXED_WINDOWS = 4              # PLAN.md: every fly, every generation, the same four days
 TOP_FLIES = 5                  # flies named in each summary
 ACTION_NAMES = ("hold", "buy", "sell")
 
@@ -47,6 +54,7 @@ class Config:
     generations: int = 3
     population: int = 100
     bars: int = BARS_PER_WINDOW
+    windows: int = FIXED_WINDOWS
     start_cash: float = START_CASH
     fee_bps: float = FEE_BPS
     min_hold_bars: int = MIN_HOLD_BARS
@@ -131,20 +139,29 @@ def seed_tribes(cfg: Config, tribes: list[Tribe], candles: pd.DataFrame, rng: np
     return reports
 
 
-# ---- one generation ------------------------------------------------------------------------
+# ---- the fixed days ------------------------------------------------------------------------
 
-def draw_window(cfg: Config, candles: pd.DataFrame, rng: np.random.Generator) -> tuple[int, int]:
-    """The same random window for both tribes and every competitor (PLAN.md EVOLUTION)."""
+def draw_fixed_windows(cfg: Config, candles: pd.DataFrame) -> list[tuple[int, int]]:
+    """`cfg.windows` days of the evolve set, drawn once per run, oldest first.
+
+    No two share a bar, and no two share a chart either: each one needs 63 bars of history
+    before its first decision, so they are kept a window plus a chart apart. Drawn from their own
+    seed, so the days depend on the run's seed and nothing else."""
+    rng = np.random.default_rng(cfg.seed + 97)
     lowest = max(WINDOW - 1, cfg.momentum_lookback - 1)
     highest = len(candles) - cfg.bars - 1
-    if highest <= lowest:
-        raise ValueError(f"{len(candles):,} bars are too few for a {cfg.bars}-bar window")
-    first = int(rng.integers(lowest, highest))
-    return first, first + cfg.bars - 1
+    if highest - lowest < cfg.windows * (cfg.bars + WINDOW):
+        raise ValueError(f"{len(candles):,} bars are too few for {cfg.windows} separate {cfg.bars}-bar windows")
+    picked: list[int] = []
+    while len(picked) < cfg.windows:
+        first = int(rng.integers(lowest, highest))
+        if all(abs(first - other) > cfg.bars + WINDOW for other in picked):
+            picked.append(first)
+    return [(first, first + cfg.bars - 1) for first in sorted(picked)]
 
 
 def window_facts(candles: pd.DataFrame, first: int, last: int) -> dict:
-    """What the window was, so a viewer can look it up (rule 8)."""
+    """What a day was, so a viewer can look it up (rule 8)."""
     opens, closes = candles["open"].to_numpy(), candles["close"].to_numpy()
     entry, exit_ = float(opens[first + 1]), float(closes[last + 1])
     return {"first_index": int(first), "last_index": int(last), "bars": int(last - first + 1),
@@ -154,43 +171,74 @@ def window_facts(candles: pd.DataFrame, first: int, last: int) -> dict:
             "price_move_pct": round(100 * (exit_ / entry - 1), 4)}
 
 
-def fly_records(tribe: Tribe, result: WindowResult, scores: np.ndarray, wallet: Wallet,
-                generation: int) -> list[dict]:
-    counts = np.stack([(result.actions == a).sum(axis=0) for a in range(3)])       # (3, P)
-    return [{"id": tribe.roster[i], **{k: v for k, v in tribe.lineage.flies[tribe.roster[i]].as_dict().items()
-                                       if k != "id"},
-             "generations_lived": generation - tribe.lineage.flies[tribe.roster[i]].born + 1,
-             "fitness": round(float(scores[i]), logs.FITNESS_PLACES),
-             "final_equity": round(float(result.final_equity[i]), logs.EQUITY_PLACES),
-             "trades": int(result.trades[i]), "held_back": int(wallet.held_back[i]),
-             "broke": bool(result.broke[i]),
-             "actions": dict(zip(ACTION_NAMES, counts[:, i].tolist())),
-             "distinct_actions": int((counts[:, i] > 0).sum())}
-            for i in range(len(tribe.roster))]
+# ---- one tribe on the fixed days -------------------------------------------------------------
+
+@dataclasses.dataclass
+class Evaluation:
+    finals: np.ndarray          # (K, P) final equity on each day
+    trades: np.ndarray          # (K, P) fills on each day
+    held_back: np.ndarray       # (K, P) trades the minimum hold refused
+    actions: list[np.ndarray]   # K x (T, P)
+    equity: list[np.ndarray]    # K x (T, P)
+    seconds: float
 
 
-def tribe_summary(tribe: Tribe, records: list[dict], scores: np.ndarray, result: WindowResult,
-                  generation: int, seconds: float) -> dict:
-    # Ranked on the raw scores, the way `breed` ranks them, so the hero named here is exactly
-    # the fly that survives first; the fitness inside a record is rounded for the log.
-    ranked = [records[i] for i in np.argsort(-scores, kind="stable")]
-    equity, trades = result.final_equity, result.trades
-    counts = np.stack([(result.actions == a).sum(axis=0) for a in range(3)]).sum(axis=1)
+def evaluate(tribe: "Tribe", candles: pd.DataFrame, windows: list[tuple[int, int]], cfg: Config) -> Evaluation:
+    """Every fly of a tribe on every fixed day. A fresh wallet and a fresh brain state each day:
+    the days are separate trials, not one long run."""
+    started = time.perf_counter()
+    finals, trades, held, actions, equity = [], [], [], [], []
+    for first, last in windows:
+        wallet = Wallet(cfg.population, **cfg.wallet)
+        result = trade_window(tribe.agent.start(tribe.genome).decide, candles, first, last, wallet)
+        finals.append(result.final_equity); trades.append(result.trades); held.append(wallet.held_back.copy())
+        actions.append(result.actions); equity.append(result.equity)
+    return Evaluation(np.stack(finals), np.stack(trades), np.stack(held), actions, equity,
+                      time.perf_counter() - started)
+
+
+def fly_records(tribe: "Tribe", ev: Evaluation, scores: np.ndarray, survived: np.ndarray,
+                cfg: Config, generation: int) -> list[dict]:
+    counts = sum(np.stack([(a == k).sum(axis=0) for k in range(3)]) for a in ev.actions)   # (3, P)
+    geo = cfg.start_cash * np.exp(scores)
+    out = []
+    for i, fly_id in enumerate(tribe.roster):
+        fly = tribe.lineage.flies[fly_id]
+        out.append({"id": fly_id, "parent": fly.parent, "born": fly.born, "origin": fly.origin,
+                    "generations_lived": generation - fly.born + 1,
+                    "fitness": round(float(scores[i]), logs.FITNESS_PLACES),
+                    "final_equity": round(float(geo[i]), logs.EQUITY_PLACES),
+                    "final_equity_by_window": [round(float(e), logs.EQUITY_PLACES) for e in ev.finals[:, i]],
+                    "trades": int(ev.trades[:, i].sum()),
+                    "trades_per_day": round(float(ev.trades[:, i].mean()), 2),
+                    "held_back": int(ev.held_back[:, i].sum()),
+                    "survived": bool(survived[i]), "eliminated": not bool(survived[i]),
+                    "actions": dict(zip(ACTION_NAMES, counts[:, i].tolist())),
+                    "distinct_actions": int((counts[:, i] > 0).sum())})
+    return out
+
+
+def tribe_summary(tribe: "Tribe", records: list[dict], scores: np.ndarray, ev: Evaluation,
+                  cfg: Config, generation: int) -> dict:
+    ranked = [records[i] for i in np.argsort(-scores, kind="stable")]     # as breeding ranks them
+    geo = cfg.start_cash * np.exp(scores)
+    per_day = ev.trades.mean(axis=0)
+    counts = sum(np.stack([(a == k).sum(axis=0) for k in range(3)]) for a in ev.actions).sum(axis=1)
     variety = np.array([r["distinct_actions"] for r in records])
+    survived = sum(r["survived"] for r in records)
     hero = ranked[0]
     return {
-        "population": len(records),
-        "broke": int(result.broke.sum()),
-        "alive": int((~result.broke).sum()),
-        "seconds": round(seconds, 2),
+        "population": len(records), "survived": int(survived), "eliminated": int(len(records) - survived),
+        "seconds": round(ev.seconds, 2),
         "fitness": {"best": ranked[0]["fitness"], "median": round(float(np.median(scores)), logs.FITNESS_PLACES),
                     "mean": round(float(scores.mean()), logs.FITNESS_PLACES), "worst": ranked[-1]["fitness"]},
-        "final_equity": {"best": round(float(equity.max()), 2), "median": round(float(np.median(equity)), 2),
-                         "mean": round(float(equity.mean()), 2), "worst": round(float(equity.min()), 2)},
-        "trades": {"total": int(trades.sum()), "median": int(np.median(trades)),
-                   "min": int(trades.min()), "max": int(trades.max())},
-        "held_back_by_minimum_hold": int(sum(r["held_back"] for r in records)),
-        "action_share": {name: round(float(c / counts.sum()), 4) for name, c in zip(ACTION_NAMES, counts)},
+        "final_equity": {"best": round(float(geo.max()), 2), "median": round(float(np.median(geo)), 2),
+                         "mean": round(float(geo.mean()), 2), "worst": round(float(geo.min()), 2)},
+        "median_equity_by_window": [round(float(np.median(ev.finals[k])), 2) for k in range(len(ev.finals))],
+        "trades": {"total": int(ev.trades.sum()), "median_per_day": round(float(np.median(per_day)), 2),
+                   "mean_per_day": round(float(per_day.mean()), 2), "max_per_day": round(float(per_day.max()), 2)},
+        "held_back_by_minimum_hold": int(ev.held_back.sum()),
+        "action_share": {n: round(float(c / counts.sum()), 4) for n, c in zip(ACTION_NAMES, counts)},
         "flies_using_2plus_actions": int((variety >= 2).sum()),
         "share_using_2plus_actions": round(float((variety >= 2).mean()), 4),
         "top": ranked[:TOP_FLIES],
@@ -199,34 +247,55 @@ def tribe_summary(tribe: Tribe, records: list[dict], scores: np.ndarray, result:
     }
 
 
-def generation_payload(cfg: Config, run_id: str, generation: int, window: dict,
-                       tribes: dict[str, dict], competitors: dict, seconds: float) -> dict:
-    return {"run_id": run_id, "generation": generation, "seconds": round(seconds, 2),
-            "window": window, "config": cfg.as_dict(), "tribes": tribes, "competitors": competitors}
-
-
-def tribe_log(tribe: Tribe, records: list[dict], result: WindowResult) -> dict:
-    """Everything about one tribe's generation: rule 7 says the logs hold the genomes, the
-    equity curves and the trades, because the visuals replay the logs and never the simulation."""
+def tribe_log(tribe: "Tribe", records: list[dict], ev: Evaluation) -> dict:
+    """Everything about one tribe's generation (rule 7): the visuals replay the logs, never the
+    simulation. Curves and actions are per fixed day, in day order."""
     genome = tribe.genome
     return {"flies": records,
-            "equity": logs.rounded(result.equity, logs.EQUITY_PLACES),        # (T, P)
-            "actions": result.actions.T.tolist(),                             # (P, T) int8
+            "equity_by_window": [logs.rounded(e, logs.EQUITY_PLACES) for e in ev.equity],     # K x (T, P)
+            "actions_by_window": [a.T.tolist() for a in ev.actions],                          # K x (P, T)
             "genomes": {name: logs.rounded(getattr(genome, name), logs.GENE_PLACES)
                         for name in ("chart_gain", "position_gain", "readout_w")},
             "genome_size": int(genome.size())}
 
 
+def competitors_on(cfg: Config, candles: pd.DataFrame, windows: list[tuple[int, int]]) -> tuple[dict, dict]:
+    """Momentum, random and buy-and-hold on the fixed days, scored the way the flies are.
+    The days never change, so this runs once; random is seeded per day, so it is fixed too."""
+    finals: dict[str, list[float]] = {}
+    curves: dict[str, list] = {}
+    trades: dict[str, int] = {}
+    for k, (first, last) in enumerate(windows):
+        for name, run_ in run_competitors(candles, first, last, seed=cfg.seed + 1_000 * (k + 1),
+                                          lookback=cfg.momentum_lookback, **cfg.wallet).items():
+            finals.setdefault(name, []).append(run_.final_equity)
+            curves.setdefault(name, []).append(logs.rounded(run_.equity, logs.EQUITY_PLACES))
+            trades[name] = trades.get(name, 0) + run_.trades
+    digest = {}
+    for name, days in finals.items():
+        score = float(np.log(np.maximum(np.array(days), 1e-9) / cfg.start_cash).mean())
+        digest[name] = {"fitness": round(score, logs.FITNESS_PLACES),
+                        "final_equity": round(cfg.start_cash * float(np.exp(score)), 2),
+                        "final_equity_by_window": [round(float(d), 2) for d in days],
+                        "trades_per_day": round(trades[name] / len(windows), 2)}
+    return digest, curves
+
+
 # ---- the run -------------------------------------------------------------------------------
 
 def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = print) -> dict:
-    """Run `cfg.generations` generations and return the run's own summary."""
+    """Run `cfg.generations` generations on fixed days and return the run's own summary."""
     candles = load_evolve()
     split = load_split()
     bar_seconds = int(split["granularity_seconds"])
     log(f"{len(candles):,} evolve bars of {bar_seconds // 60} minutes "
         f"({split['evolve']['first']} .. {split['evolve']['last']}); "
         f"{split['locked']['rows']:,} locked bars stay shut (rule 3)")
+
+    windows = draw_fixed_windows(cfg, candles)
+    days = [window_facts(candles, first, last) for first, last in windows]
+    for d in days:
+        log(f"fixed day: {d['first_time']} .. {d['last_time']}  {d['price_move_pct']:+.2f}%")
 
     calibration = render_range(candles, WINDOW - 1, WINDOW - 2 + MIN_CALIBRATION_CHARTS)
     tribes, facts = build_tribes(cfg, calibration, log)
@@ -236,62 +305,62 @@ def run(cfg: Config, run_id: str | None = None, log: Callable[[str], None] = pri
     log(f"genome: {tribes[0].genome.size():,} numbers per fly "
         f"({facts['readout_groups']} readout groups x 2 votes + 64 chart gains + 1 position gain)")
 
+    competitors, competitor_curves = competitors_on(cfg, candles, windows)
+    log("competitors on the fixed days: " + ", ".join(
+        f"{n} ${c['final_equity']:,.2f}" for n, c in competitors.items()))
+
     run_dir = logs.new_run_dir(run_id)
     started = time.perf_counter()
     logs.write_manifest(run_dir, {"run_id": run_dir.name, "config": cfg.as_dict(), "brain": facts,
-                                  "seeding": seeding, "data": split,
+                                  "seeding": seeding, "data": split, "windows": days,
+                                  "competitors": competitors, "competitor_equity": competitor_curves,
                                   "genome_size": int(tribes[0].genome.size()),
                                   "started": datetime.now(timezone.utc).isoformat()})
 
     summaries = []
     for generation in range(cfg.generations):
-        summaries.append(one_generation(cfg, run_dir, tribes, candles, rng, generation, log))
+        summaries.append(one_generation(cfg, run_dir, tribes, candles, windows, days, competitors,
+                                        rng, generation, log))
     elapsed = time.perf_counter() - started
 
     minutes = [s["seconds"] / 60 for s in summaries]
     report = {"run_id": run_dir.name, "run_dir": str(run_dir), "generations": cfg.generations,
               "minutes_per_generation": round(float(np.mean(minutes)), 3),
               "minutes_total": round(elapsed / 60, 3), "brain": facts, "seeding": seeding,
+              "windows": days, "competitors": competitors,
               "genome_size": int(tribes[0].genome.size()), "summaries": summaries}
     logs.write_json(run_dir / "run_summary.json", report)
     return report
 
 
-def one_generation(cfg: Config, run_dir: Path, tribes: list[Tribe], candles: pd.DataFrame,
+def one_generation(cfg: Config, run_dir: Path, tribes: list["Tribe"], candles: pd.DataFrame,
+                   windows: list[tuple[int, int]], days: list[dict], competitors: dict,
                    rng: np.random.Generator, generation: int, log: Callable[[str], None]) -> dict:
     started = time.perf_counter()
-    first, last = draw_window(cfg, candles, rng)
-    window = window_facts(candles, first, last)
-    log(f"\ngeneration {generation}: bars {first:,}..{last:,} "
-        f"({window['first_time']} .. {window['last_time']}, {window['price_move_pct']:+.2f}%)")
+    log(f"\ngeneration {generation}: {len(windows)} fixed days")
 
     full, digest, scored = {}, {}, {}
     for tribe in tribes:
-        t0 = time.perf_counter()
-        wallet = Wallet(cfg.population, **cfg.wallet)
-        result = trade_window(tribe.agent.start(tribe.genome).decide, candles, first, last, wallet)
-        seconds = time.perf_counter() - t0
-        scores = fitness(result.final_equity, result.broke, cfg.start_cash)
-        records = fly_records(tribe, result, scores, wallet, generation)
-        full[tribe.name] = tribe_log(tribe, records, result)
-        digest[tribe.name] = tribe_summary(tribe, records, scores, result, generation, seconds)
+        ev = evaluate(tribe, candles, windows, cfg)
+        scores = fitness_over_windows(ev.finals, cfg.start_cash)
+        survived = np.zeros(len(scores), bool)
+        survived[survivors_of(scores, cfg.survive_share)] = True
+        records = fly_records(tribe, ev, scores, survived, cfg, generation)
+        full[tribe.name] = tribe_log(tribe, records, ev)
+        digest[tribe.name] = tribe_summary(tribe, records, scores, ev, cfg, generation)
         scored[tribe.name] = scores
         d = digest[tribe.name]
         log(f"  {tribe.name:>9}: best ${d['final_equity']['best']:,.2f} "
-            f"median ${d['final_equity']['median']:,.2f} | fitness {d['fitness']['best']:+.4f} "
-            f"| {d['broke']} broke | {d['trades']['median']} trades (median) | {seconds:.0f} s")
-
-    competitors = run_competitors(candles, first, last, seed=cfg.seed + generation,
-                                 lookback=cfg.momentum_lookback, **cfg.wallet)
-    comp_digest = {name: run_.summary(cfg.start_cash) for name, run_ in competitors.items()}
-    log("  competitors: " + ", ".join(f"{n} ${c['final_equity']:,.2f}" for n, c in comp_digest.items()))
+            f"median ${d['final_equity']['median']:,.2f} | fitness {d['fitness']['best']:+.5f} "
+            f"| {d['eliminated']} eliminated | {d['trades']['median_per_day']:g} trades/day (median) "
+            f"| {ev.seconds:.0f} s")
 
     seconds = time.perf_counter() - started
-    logs.write_generation(run_dir, generation, generation_payload(
-        cfg, run_dir.name, generation, window, full, comp_digest, seconds) |
-        {"competitor_equity": {n: logs.rounded(r.equity, logs.EQUITY_PLACES) for n, r in competitors.items()}})
+    logs.write_generation(run_dir, generation, {
+        "run_id": run_dir.name, "generation": generation, "seconds": round(seconds, 2),
+        "windows": days, "config": cfg.as_dict(), "tribes": full, "competitors": competitors})
     summary = {"run_id": run_dir.name, "generation": generation, "seconds": round(seconds, 2),
-               "window": window, "tribes": digest, "competitors": comp_digest}
+               "windows": days, "tribes": digest, "competitors": competitors}
     logs.write_summary(run_dir, generation, summary)
 
     for tribe in tribes:

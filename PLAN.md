@@ -110,16 +110,24 @@ Deadline: published within 7 days.
 
 ## EVOLUTION
 
-- Each generation, every fly in both tribes trades the SAME randomly chosen window
-  of the evolve set: 1 day = 288 five-minute bars.
+- **Four fixed days.** Once per run, 4 non-overlapping days (288 five-minute bars each) are
+  drawn from the evolve set. Every generation, every fly of both tribes trades all four, with a
+  fresh wallet and a fresh brain state each day. Fitness is the mean log return over the four.
+  - Why fixed: when each generation drew one new random day, a genome's fitness was mostly the
+    luck of that day, so nothing could accumulate (runs/day4_full: 40 generations, no trend).
+    On fixed days a genome's score is its own, and a survivor scores the same next generation.
+  - The price of fixed days is overfitting: a genome can learn four days rather than markets.
+    Improvement on them is not evidence of skill; the finale's six locked months are.
 - **Starting genomes that emit only one action are rejected** and redrawn: a fly that HOLDs
   (or buys) all window carries no information for selection to work on. The share of random
   genomes that use two or more actions is measured and reported; the chart and vote settings
   above were tuned until it passed ~70%.
-- Fitness = log(final equity / 1000). Broke flies get the minimum fitness.
-- Top 20% survive. Children = parent genome + Gaussian noise. 10% random newcomers.
-- Competitors logged every generation on the same window, under the same fees, the same
-  minimum hold and the same rule-4 ordering: Momentum, Random, Buy-and-hold.
+- Fitness = mean over the four days of log(final equity / 1000).
+- Top 20% survive unchanged (elitism: the best genomes found so far are always in the
+  population). Children = parent genome + Gaussian noise. 10% random newcomers.
+- Competitors - Momentum, Random, Buy-and-hold - trade the same four days under the same
+  fees, minimum hold and rule-4 ordering, scored the same way. The days never change, so they
+  run once per run and are logged with every generation.
 - Lineage: every fly has a run-unique id and records its parent id (for the family tree).
   The summary carries the top fly's id and its ancestor chain back to generation 0, so the
   story can follow one hero lineage.
@@ -212,8 +220,9 @@ Reference point: nfly reports whole-CNS inference around 8 ms/step on an RTX 509
 The Spark will differ, so measure it.
 
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
-- A generation is 2 tribes x 288 bars x 4 brain steps per bar. Measured on the GB10 at
-  population 100: 12.50 min per generation at 576 bars, 6.28 min at 288 (runs/day4_sanity).
+- A generation is 2 tribes x 4 days x 288 bars x 4 brain steps per bar. Measured on the GB10
+  at population 100: 6.28 min per generation for one 288-bar day (runs/day4_sanity), so about
+  25 min for four; the measured figure is in the run's run_summary.json.
 - Target: <= 10 minutes per generation for both tribes combined.
 - Measured minutes per generation are reported from a real run, not from the benchmark.
 - If too slow, cut in this order:

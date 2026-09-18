@@ -73,11 +73,23 @@ def test_the_minimum_hold_never_blocks_a_no_op():
     assert wallet.held_back[0] == 0 and wallet.trades[0] == 1
 
 
-def test_a_fly_below_the_broke_line_dies_and_its_equity_freezes():
+def test_no_fly_goes_broke_by_default():
+    """Death is elimination by selection now, not bankruptcy: by default a fly that loses 60%
+    keeps trading, and its equity keeps moving."""
+    assert BROKE_BELOW == 0.0
     wallet = Wallet(1)
     wallet.fill(np.array([BUY], np.int8), PRICE)
+    assert wallet.settle(PRICE * 0.4)[0] < 500 and not wallet.broke[0]
+    for _ in range(MIN_HOLD_BARS):
+        wallet.fill(np.array([SELL], np.int8), PRICE)
+    assert wallet.trades[0] == 2
+
+
+def test_an_explicit_broke_line_still_freezes_a_fly():
+    wallet = Wallet(1, broke_below=500.0)
+    wallet.fill(np.array([BUY], np.int8), PRICE)
     wallet.settle(PRICE * 0.4)                                    # equity about $400
-    assert wallet.broke[0] and wallet.equity[0] < BROKE_BELOW
+    assert wallet.broke[0] and wallet.equity[0] < 500.0
     frozen = wallet.equity[0]
     for _ in range(MIN_HOLD_BARS):
         wallet.fill(np.array([SELL], np.int8), PRICE)             # the dead do not trade

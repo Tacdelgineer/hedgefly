@@ -3,9 +3,10 @@
     uv run python -m scripts.run_evolution --generations 3
     uv run python -m scripts.run_evolution --generations 50 --run-id overnight
 
-Each generation draws one window of the evolve set and gives it to both tribes and to all three
-competitors, then writes runs/<run_id>/gen_XXX.json and gen_XXX_summary.json. Nothing here
-touches the locked test set (rule 3); that is finale.py's alone.
+Once per run it draws four fixed days of the evolve set; every generation, every fly of both
+tribes trades all four, and fitness is the mean log return over them. Writes
+runs/<run_id>/gen_XXX.json and gen_XXX_summary.json. Nothing here touches the locked test set
+(rule 3); that belongs to the two finale scripts alone.
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ def main() -> None:
     default = Config()
     p.add_argument("--generations", type=int, default=default.generations)
     p.add_argument("--population", type=int, default=default.population)
-    p.add_argument("--bars", type=int, default=default.bars, help="decision bars per generation window")
+    p.add_argument("--bars", type=int, default=default.bars, help="decision bars per fixed day")
+    p.add_argument("--windows", type=int, default=default.windows, help="fixed days every fly trades")
     p.add_argument("--fee-bps", type=float, default=default.fee_bps, help="per side")
     p.add_argument("--min-hold-bars", type=int, default=default.min_hold_bars)
     p.add_argument("--mutation-rate", type=float, default=default.mutation_rate)
@@ -44,14 +46,18 @@ def main() -> None:
     print(f"genome: {report['genome_size']:,} numbers per fly "
           f"({report['brain']['readout_groups']} readout groups)")
     print(f"logs: {report['run_dir']}")
-    print("\n| gen | real best | scrambled best | momentum | random | buy & hold | window move |")
+    c = report["competitors"]
+    print(f"competitors on the fixed days (geometric mean): momentum ${c['momentum']['final_equity']:,.2f}, "
+          f"random ${c['random']['final_equity']:,.2f}, buy & hold ${c['buy_and_hold']['final_equity']:,.2f}")
+    print("\n| gen | real best | real median | scrambled best | scrambled median | trades/day real | trades/day scr |")
     print("| --- | --- | --- | --- | --- | --- | --- |")
     for s in report["summaries"]:
-        t, c = s["tribes"], s["competitors"]
+        t = s["tribes"]
         print(f"| {s['generation']} | ${t['real']['final_equity']['best']:,.2f} "
+              f"| ${t['real']['final_equity']['median']:,.2f} "
               f"| ${t['scrambled']['final_equity']['best']:,.2f} "
-              f"| ${c['momentum']['final_equity']:,.2f} | ${c['random']['final_equity']:,.2f} "
-              f"| ${c['buy_and_hold']['final_equity']:,.2f} | {s['window']['price_move_pct']:+.2f}% |")
+              f"| ${t['scrambled']['final_equity']['median']:,.2f} "
+              f"| {t['real']['trades']['median_per_day']:g} | {t['scrambled']['trades']['median_per_day']:g} |")
     for name in ("real", "scrambled"):
         hero = report["summaries"][-1]["tribes"][name]["hero_lineage"]
         print(f"\n{name} hero lineage: {hero['id']} (born gen {hero['born']}, {hero['origin']}, "

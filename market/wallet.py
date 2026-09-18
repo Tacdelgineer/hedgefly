@@ -8,7 +8,9 @@ PLAN.md rules this enforces:
   counted in calls to `fill`, i.e. in bars of the window, and applies to flies and
   competitors alike.
 - a fly whose equity drops below `broke_below` is broke: it stops trading and its equity is
-  frozen at the value it had when it died.
+  frozen at the value it had when it died. The line defaults to 0, which a long-or-flat wallet
+  can never cross: a fly no longer dies of bankruptcy, it dies by failing to reproduce
+  (PLAN.md EVOLUTION). The mechanism stays for anyone who passes a line explicitly.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import numpy as np
 START_CASH = 1000.0
 FEE_BPS = 5.0             # per side
 MIN_HOLD_BARS = 3         # bars a position must be held before it can flip
-BROKE_BELOW = 500.0
+BROKE_BELOW = 0.0         # no bankruptcy: death is elimination by selection
 
 HOLD, BUY, SELL = 0, 1, 2          # brain/interface.md
 

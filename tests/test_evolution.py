@@ -111,3 +111,23 @@ def test_genome_arithmetic_keeps_the_shapes(genome):
     assert torch.equal(swapped.readout_w[0], torch.zeros(GROUPS, N_VOTES))
     assert torch.equal(swapped.readout_w[1], genome.readout_w[1])
     assert swapped.chart_gain.shape == (POPULATION, GAIN_GRID, GAIN_GRID)
+
+
+def test_fitness_over_fixed_windows_is_the_mean_log_return():
+    from evolve.population import fitness_over_windows
+    finals = np.array([[1100.0, 1000.0], [900.0, 1000.0], [1000.0, 1000.0], [1000.0, 1000.0]])
+    scores = fitness_over_windows(finals, 1000.0)
+    assert scores[0] == pytest.approx((np.log(1.1) + np.log(0.9)) / 4)
+    assert scores[1] == 0.0
+    assert scores[0] < scores[1], "a good day and a bad day of the same size is a loss, not a wash"
+
+
+def test_the_logs_and_breeding_eliminate_the_same_flies(genome, founded):
+    from evolve.population import survivors_of
+    lineage, roster = founded
+    scores = np.random.default_rng(3).normal(size=POPULATION)
+    keep = survivors_of(scores)
+    offspring = breed(genome, roster, scores, lineage, 0, np.random.default_rng(0),
+                      torch.Generator().manual_seed(0))
+    assert offspring.survivors == [roster[i] for i in keep]
+    assert len(keep) == 20

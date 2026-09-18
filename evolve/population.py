@@ -63,6 +63,22 @@ def mutate(genome: Genome, rate: float = MUTATION_RATE, generator: torch.Generat
 
 # ---- fitness --------------------------------------------------------------------------------
 
+def fitness_over_windows(finals: np.ndarray, start_cash: float) -> np.ndarray:
+    """(K, P) final equity on each of K fixed windows -> (P,) mean log return.
+
+    The mean of the logs, so one ruinous day cannot be averaged away by three good ones, and the
+    ranking it gives is the ranking of the geometric-mean equity, start_cash * exp(fitness)."""
+    return np.log(np.maximum(finals, 1e-9) / start_cash).mean(axis=0)
+
+
+def survivors_of(scores: np.ndarray, survive_share: float = SURVIVE_SHARE) -> np.ndarray:
+    """Indices of the flies that reproduce, fittest first. Everyone else is eliminated - which
+    is what dying means now. Stable, so ties go to the lower index, identically in the logs and
+    in breeding."""
+    n = max(1, round(survive_share * len(scores)))
+    return np.argsort(-scores, kind="stable")[:n]
+
+
 def fitness(final_equity: np.ndarray, broke: np.ndarray, start_cash: float) -> np.ndarray:
     """log(final equity / start cash). Broke flies all share the tribe's worst fitness, so
     selection never prefers one bankruptcy to another (PLAN.md EVOLUTION)."""
@@ -143,8 +159,7 @@ def breed(genome: Genome, roster: list[str], scores: np.ndarray, lineage: Lineag
     if n_child < 0:
         raise ValueError(f"survivors ({n_survive}) and newcomers ({n_newcomer}) exceed the population ({population})")
 
-    ranked = np.argsort(-scores, kind="stable")                      # deterministic ties
-    survivors = ranked[:n_survive]
+    survivors = survivors_of(scores, survive_share)                    # the same ranking the logs use
     parents = rng.choice(survivors, n_child) if n_child else np.empty(0, int)
 
     children = mutate(select(genome, parents), rate, generator) if n_child else None
