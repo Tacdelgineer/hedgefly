@@ -22,6 +22,7 @@ import torch
 
 from brain import Genome, TribeAgent, build_eye, scramble
 from brain.agent import MIN_CALIBRATION_CHARTS, VOTE_MEMORY
+from evolve import BARS_PER_WINDOW
 from evolve.seeding import action_variety, seed_population
 from market import FEE_BPS, MIN_HOLD_BARS, START_CASH, load_evolve, render_range
 from market.chart import WINDOW
@@ -70,8 +71,8 @@ def main() -> None:
         print(f"\n{name}: {agent.n_groups} readout groups, genome {genome.size():,} numbers per fly, "
               f"built in {build_s:.1f} s")
         print(f"  {args.population} flies x {args.bars} bars in {trade_s:.1f} s "
-              f"({1000 * trade_s / args.bars:.0f} ms/bar); 576-bar window, both tribes: "
-              f"{2 * 576 * trade_s / args.bars / 60:.2f} min")
+              f"({1000 * trade_s / args.bars:.0f} ms/bar); {BARS_PER_WINDOW}-bar window, both tribes: "
+              f"{2 * BARS_PER_WINDOW * trade_s / args.bars / 60:.2f} min")
         print(f"  distinct actions per fly: {np.bincount(variety, minlength=4)[1:].tolist()} "
               f"(1, 2, 3 actions)")
         print(f"  share using 2+ actions: {share:.1%}  {'PASS' if share >= 0.70 else 'BELOW 70%'}")

@@ -1,6 +1,6 @@
 """One window end to end: a population of screened random-genome flies trades the evolve set.
 
-    uv run python -m scripts.run_window --population 100 --bars 576
+    uv run python -m scripts.run_window --population 100 --bars 288
 
 No evolution and no logging: this checks that the brain, the chart, the wallet and the rule-4
 ordering work together on real candles, next to the competitors, and shows how long one tribe's

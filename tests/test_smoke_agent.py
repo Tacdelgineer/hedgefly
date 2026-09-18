@@ -13,9 +13,9 @@ from brain import BUY, HOLD, SELL, Genome, TribeAgent
 from brain.agent import MIN_CALIBRATION_CHARTS
 
 POPULATION = 100
-BARS = 128                 # a slice of a 576-bar generation window, to keep the suite runnable
+BARS = 128                 # a slice of a 288-bar generation window, to keep the suite runnable
 TRIBES = 2
-WINDOW_BARS = 576
+WINDOW_BARS = 288
 VARIETY_TARGET = 0.70      # PLAN.md: past ~70% of flies using 2+ actions
 
 

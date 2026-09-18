@@ -29,7 +29,7 @@ def test_the_two_files_do_not_overlap_in_time(split):
 
 
 def test_the_candles_are_five_minute_bars(split):
-    """PLAN.md SETUP: the flies trade 5-minute bars, 576 of them to a generation window."""
+    """PLAN.md SETUP: the flies trade 5-minute bars, 288 of them to a generation window."""
     assert split["granularity_seconds"] == 300
     candles = load_evolve()
     gaps = candles["timestamp"].diff().dropna()

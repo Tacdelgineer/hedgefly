@@ -37,7 +37,7 @@ from .competitors import MOMENTUM_LOOKBACK, run_competitors
 from .population import Lineage, breed, fitness
 from .seeding import PROBE_BARS, SEED_ROUNDS, seed_population
 
-BARS_PER_WINDOW = 576          # PLAN.md: 2 days of 5-minute bars
+BARS_PER_WINDOW = 288          # PLAN.md: 1 day of 5-minute bars
 TOP_FLIES = 5                  # flies named in each summary
 ACTION_NAMES = ("hold", "buy", "sell")
 

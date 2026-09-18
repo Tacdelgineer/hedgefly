@@ -184,7 +184,7 @@ class FlyRun:
         A fly trades on the CHANGE in its vote, not on its level: each logit is measured
         against the fly's own running average of it. Readout neurons sit on a resting pattern
         that differs from fly to fly, so a fly judged on levels picks one action at the start of
-        the window and repeats it for 576 bars; judged on changes, it reacts to the chart."""
+        the window and repeats it for a whole day of bars; judged on changes, it reacts to the chart."""
         body, stats, genome = self.agent.body, self.agent.stats, self.genome
         chart_t = chart_tensor(chart, body.device)
         position_t = position_tensor(position, genome.population, body.device)

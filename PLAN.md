@@ -33,7 +33,7 @@ Deadline: published within 7 days.
    Recompute any per-neuron input normalization after swapping. Same population
    size, same windows, same mutation settings as the real tribe.
 7. **Everything is logged.** Every generation writes to `runs/<run_id>/gen_XXX.json`
-   (genomes, equity curves, trades, fitness, clan tags). Visuals replay logs; they
+   (genomes, equity curves, trades, fitness, lineage). Visuals replay logs; they
    never re-run the simulation.
 8. **Every number viewers see comes from the logs.** On screen, in narration, on
    posters. The narrator never invents numbers (see Fact Guard).
@@ -107,7 +107,7 @@ Deadline: published within 7 days.
 ## EVOLUTION
 
 - Each generation, every fly in both tribes trades the SAME randomly chosen window
-  of the evolve set: 2 days = 576 five-minute bars.
+  of the evolve set: 1 day = 288 five-minute bars.
 - **Starting genomes that emit only one action are rejected** and redrawn: a fly that HOLDs
   (or buys) all window carries no information for selection to work on. The share of random
   genomes that use two or more actions is measured and reported; the chart and vote settings
@@ -119,10 +119,8 @@ Deadline: published within 7 days.
 - Lineage: every fly has a run-unique id and records its parent id (for the family tree).
   The summary carries the top fly's id and its ancestor chain back to generation 0, so the
   story can follow one hero lineage.
-- Clan tags (for the story): cluster flies by behavior (trade frequency, time in
-  market, reaction to drops). Tag only; clans do not affect selection.
 - After each generation, write a compact summary `runs/<run_id>/gen_XXX_summary.json`
-  (tribe stats, deaths, top flies, clan sizes, baselines). Narrator and visuals
+  (tribe stats, deaths, top flies, hero lineage, competitors). Narrator and visuals
   read summaries, not raw logs.
 
 ## FINALE (`finale.py`)
@@ -149,14 +147,14 @@ room to room like chapters of the story. Rooms are driven by exported log data.
 | The Lab | DGX Spark on a desk, cables, a jar of fruit flies | static |
 | The Brain Room | a connectome sculpture that pulses | activity summary per generation |
 | The Trading Floor | rows of tiny desks, one per fly; two wings: Real / Scrambled; desks go dark when a fly goes broke | equity + deaths |
-| The Hall of Clans | a banner per clan; banners fall when a clan goes extinct | clan sizes |
+| The Hero's Desk | one lineage: its equity curve and its family tree back to a founder | hero lineage |
 | The Archive | bookcases of generation logs; one spine per generation | generation count |
 | The Print Shop | a riso printer printing that generation's poster | narrator poster |
 | The Vault | a locked vault door holding the test data; opens only in the finale | finale results |
 
 **Films** (hand-drawn-canvas-animation skill), 10-30 s each, maximum 3:
 1. Cold open: the life of a fly trader
-2. Extinction event: a clan wiped out by a crash
+2. Extinction event: a lineage wiped out by a crash
 3. The Vault opens: finale
 
 **Exports:** 16:9 for the main video, 9:16 crops for Shorts.
@@ -170,21 +168,21 @@ room to room like chapters of the story. Rooms are driven by exported log data.
   {
     "headline": "max 8 words",
     "narration": "1-3 sentences, nature-documentary tone",
-    "new_clan_names": {"clan_id": "name"},
     "poster": {
       "title": "short",
       "subtitle": "short",
-      "featured_room": "trading_floor | hall_of_clans | vault | ...",
+      "featured_room": "trading_floor | heros_desk | vault | ...",
       "stat_keys": ["keys from the summary to print on the poster"]
     }
   }
   ```
-- Clan names persist once given.
+- The hero lineage is the story's thread: the narrator follows the top fly's id and its
+  ancestor chain from generation to generation. A name given to a lineage persists.
 - **Posters are rendered by a riso poster template** (canvas JS, same look as HQ).
   The model chooses words and which stat keys to show; the template reads the
   real numbers from the summary. The model never types numbers onto posters.
 - **Fact Guard** (`story/validate.py`): rejects narration that contains a number
-  not present in the summary (small rounding tolerance) or names a fly, clan or
+  not present in the summary (small rounding tolerance) or names a fly, lineage or
   tribe that doesn't exist. Rejected output is regenerated.
 - Voice: narration text goes to the existing TTS narration pipeline.
 
@@ -196,7 +194,8 @@ Reference point: nfly reports whole-CNS inference around 8 ms/step on an RTX 509
 The Spark will differ, so measure it.
 
 - Measure ms/step at population 1, 100, 200 for subsets: all, brain, visual_small.
-- A generation is 2 tribes x 576 bars x 4 brain steps per bar.
+- A generation is 2 tribes x 288 bars x 4 brain steps per bar. Measured on a GB10 at
+  population 100: 12.5 min per generation at 576 bars, so ~6.3 min at 288.
 - Target: <= 10 minutes per generation for both tribes combined.
 - Measured minutes per generation are reported from a real run, not from the benchmark.
 - If too slow, cut in this order:
@@ -210,7 +209,7 @@ The Spark will differ, so measure it.
 
 1. Films 2 and 3 (keep the cold open)
 2. The Print Shop room (posters still exported as images)
-3. The Hall of Clans and The Archive
+3. The Hero's Desk and The Archive
 4. Minimum HQ: The Lab, The Brain Room, The Trading Floor, The Vault
 
 ---
@@ -250,7 +249,7 @@ hedgefly/
   data/                     # connectome + candles (gitignored)
   brain/                    # load connectome, batched sim, scramble
   market/                   # fetch, split, render chart, portfolio, fees
-  evolve/                   # genome, mutation, selection, lineage, clans, logging
+  evolve/                   # genome, mutation, selection, lineage, logging
   finale.py
   story/                    # narrator.py, validate.py, prompts/
   visuals/

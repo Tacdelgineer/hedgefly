@@ -123,7 +123,7 @@ def main() -> None:
     p.add_argument("--steps", type=int, default=20, help="timed steps per repeat")
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--warmup", type=int, default=5)
-    p.add_argument("--bars", type=int, default=576, help="bars per generation window (2 days of 5-minute bars)")
+    p.add_argument("--bars", type=int, default=288, help="bars per generation window (1 day of 5-minute bars)")
     p.add_argument("--steps-per-candle", type=int, default=4)
     args = p.parse_args()
 
