@@ -29,7 +29,9 @@ git add visuals/hq/runs.json visuals/dist/hedgefly.html
 if git diff --cached --quiet; then
     echo "nothing new to commit"
 else
-    git commit -q -m "Refresh the visuals from $(basename "$RUN") and the day6_full finale
+    what="$(basename "$RUN")"
+    [[ -f "$FINALE/finale.json" || -f "$FINALE/finale_flies.json" ]] && what="$what and the day6_full finale"
+    git commit -q -m "Refresh the visuals from $what
 
 Written by scripts/refresh_visuals.sh, unattended, from the logs in runs/.
 
