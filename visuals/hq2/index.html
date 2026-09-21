@@ -32,18 +32,28 @@
   #inset .tag{position:absolute;left:8px;top:-18px;font:10px var(--mono);letter-spacing:.14em;color:var(--ghost);opacity:.7}
   body.vertical #ui{padding-bottom:16px} body.vertical #label{min-width:0}
   body.clean #ui,body.clean #inset{display:none!important}
+  /* director mode's legend: the keys, where a hand on the keyboard can see them */
+  #legend{position:fixed;right:14px;top:14px;display:grid;grid-template-columns:auto auto;
+      gap:2px 12px;align-items:baseline;padding:10px 13px;font:11px/1.45 var(--mono);
+      color:var(--ghost);letter-spacing:.06em;text-transform:uppercase;pointer-events:none;
+      background:rgba(7,7,11,.82);border:1px solid rgba(91,108,255,.4)}
+  #legend b{color:var(--gold);font-weight:400;white-space:nowrap}
+  #legend span{opacity:.72}
+  body.clean #legend,body.hidden-ui #legend{display:none!important}
+  body.vertical #legend{font-size:10px;top:10px;right:10px}
   body.vertical #inset{--s:calc((100vw - 28px) / 1280px);bottom:150px}
 </style>
 </head><body>
 <canvas id="stage" aria-label="Natural Selection Capital HQ: a neon riso diorama of two tribes of fly brains trading Bitcoin"></canvas>
 <div id="inset"><span class="tag">fly terminal · inset</span><iframe title="fly terminal" loading="lazy"></iframe></div>
+<div id="legend" aria-hidden="true"></div>
 <div id="ui">
   <button id="play">pause</button>
   <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
   <span id="label">generation 0</span>
   <span id="rooms"></span>
   <button id="building" title="the whole building (b)">building</button>
-  <button id="herocam" title="follow the hero fly on its rounds (h)">hero cam</button>
+  <button id="herocam" title="follow the hero fly on its rounds (y)">hero cam</button>
   <button id="terminal" title="the fly terminal, as an inset (t)">terminal</button>
   <div id="stat"></div>
 </div>
@@ -65,7 +75,13 @@ const qs=new URLSearchParams(location.search);
 const FPS=12,BOIL_EVERY=4,GAP=2.5,MIN_Z=.15,MAX_Z=6;
 // One clock for everything. The recorder (scripts/record_hq.mjs) sets __HEDGEFLY_VCLOCK__ and
 // steps it frame by frame, so a recording is the same every time and never drops a frame.
-const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:performance.now();
+/* Two clocks. The recorder sets __HEDGEFLY_VCLOCK__ and owns time exactly. Live, time is
+   accumulated by hand at RATE, so director mode can run the world in slow motion without any
+   other code knowing about it. */
+let SOFT=0,softLast=null,RATE=1;
+function advance(){const now=performance.now();if(softLast===null)softLast=now;
+  SOFT+=Math.min(100,now-softLast)*RATE;softLast=now}
+const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:SOFT;
 let W=1,H=1,dpr=1,started=NOW(),lastFrame=-1,lastCam='';
 const cam={x:0,y:0,zoom:1};let vel={x:0,y:0},tween=null,idleSince=NOW(),tourIndex=-1;
 // The camera rests on camBase and drifts slowly around it; tweens and the hero cam move the base.
@@ -101,7 +117,7 @@ function draw(frameNo){
 }
 
 function frame(){
-  if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(frame);
+  if(!window.__HEDGEFLY_VCLOCK_DRIVEN__){requestAnimationFrame(frame);advance()}
   stepFrame();
 }
 // camera drift: a slow, never-repeating wander, only once the viewer has left the camera alone
@@ -126,7 +142,9 @@ function stepFrame(){
 }
 
 const pointers=new Map();let drag=null,pinch=null;
-const touch=()=>{idleSince=NOW();tween=null;userMoved=true};
+// Taking the camera by hand cancels a move in flight, and keeps it where it had got to:
+// dropping the tween without committing cam would snap the camera back to where it left.
+const touch=()=>{idleSince=NOW();if(tween)camBase={x:cam.x,y:cam.y,zoom:cam.zoom};tween=null;userMoved=true};
 stage.addEventListener('pointerdown',e=>{touch();stage.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});vel={x:0,y:0};
   drag={x:e.clientX,y:e.clientY,t:NOW()};
   if(pointers.size===2){const [p1,p2]=[...pointers.values()];pinch={d:Math.hypot(p1.x-p2.x,p1.y-p2.y),zoom:cam.zoom,anchor:toWorld((p1.x+p2.x)/2,(p1.y+p2.y)/2)}}
@@ -142,11 +160,14 @@ stage.addEventListener('wheel',e=>{e.preventDefault();touch();vel={x:0,y:0};cons
   cam.zoom=clamp(cam.zoom*Math.exp(-clamp(e.deltaY,-300,300)*.0015),MIN_Z,MAX_Z);cam.x=a.x-(e.clientX-W/2)/cam.zoom;cam.y=a.y-(e.clientY-H/2)/cam.zoom},{passive:false});
 stage.addEventListener('dblclick',e=>{const w=toWorld(e.clientX,e.clientY),r=ROOMS.find(r=>w.x>=r.bounds[0]&&w.x<=r.bounds[2]&&w.y>=r.bounds[1]&&w.y<=r.bounds[3]);
   if(r){touch();tourIndex=ROOMS.indexOf(r);flyTo(framing(r.bounds))}});
-addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;const k=e.key.toLowerCase(),step=120/cam.zoom;touch();
-  if(k==='arrowleft'||k==='a')cam.x-=step;else if(k==='arrowright'||k==='d')cam.x+=step;
-  else if(k==='arrowup'||k==='w')cam.y-=step;else if(k==='arrowdown'||k==='s')cam.y+=step;
-  else if(k==='+'||k==='=')cam.zoom=clamp(cam.zoom*1.2,MIN_Z,MAX_Z);else if(k==='-')cam.zoom=clamp(cam.zoom/1.2,MIN_Z,MAX_Z);
-  else if(k==='0')flyTo(fitAll(),900);
+addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;const k=e.key.toLowerCase(),step=(e.shiftKey?28:120)/cam.zoom;touch();
+  /* A key moves camBase, not just cam: cam is rebuilt from camBase plus the idle drift every
+     frame, so panning only cam would be undone before it was ever seen. */
+  const pan=(dx,dy)=>{camBase.x+=dx;camBase.y+=dy;cam.x+=dx;cam.y+=dy};
+  const zoomBy=f=>{camBase.zoom=clamp(camBase.zoom*f,MIN_Z,MAX_Z);cam.zoom=clamp(cam.zoom*f,MIN_Z,MAX_Z)};
+  if(k==='arrowleft'||k==='a')pan(-step,0);else if(k==='arrowright'||k==='d')pan(step,0);
+  else if(k==='arrowup'||k==='w')pan(0,-step);else if(k==='arrowdown'||k==='s')pan(0,step);
+  else if(k==='+'||k==='=')zoomBy(1.2);else if(k==='-')zoomBy(1/1.2);
   else if(k==='p')stage.toBlob(b=>{const l=document.createElement('a');l.href=URL.createObjectURL(b);l.download=(document.title||'print')+'.png';l.click()});
   else return;e.preventDefault()});
 
@@ -173,6 +194,7 @@ const hero=tribe=>{const f=F();return f&&f.heroes[tribe]};
 const eliminatedBefore=g=>{let n=0;if(RUN)for(let k=0;k<g&&k<RUN.frames.length;k++)for(const t of RUN.tribes)n+=RUN.frames[k].tribes[t].eliminated;return n};
 const fallen=()=>eliminatedBefore(GEN)+Math.round(SEL*elimAt(GEN));
 const S3=v=>String(v).padStart(2,'0');
+const fmtMin=m=>m>=90?(m/60).toFixed(1).replace(/\.0$/,'')+' H':Math.round(m)+' MIN';
 
 /* =====================  THE LAB  =====================
    Where it starts: a DGX Spark on a desk, a jar of real fruit flies, a fly on the night shift. */
@@ -489,14 +511,27 @@ room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
       text(pen,s,pen.wallQuad('i',.8,2.82-k*.3,.01,.01,.1)[0],k===5?7.5:5.8,{wall:'i',tone:k===0?.5:k===5?1:.75,w:.75}));
     const reply=pen.wallQuad('j',.8,.9,4.9,2.1,.05);pen.shape(reply,['slate',.1],{w:1.1});
     const R0=5.55;                                     // 'j' wall text reads up-right: anchor at the high-j edge
-    if(llm&&llm.replies){const r=llm.replies,k=REPLY<0?r.last.length-1:REPLY%r.last.length,last=r.last[k];
-      text(pen,REPLY<0?'ITS LAST REPLY':'REPLY '+(k+1)+' OF '+r.last.length,pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
-      text(pen,last[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
-      // the hour it was asked, so a held position still reads as time passing
-      text(pen,String(last[0]).replace('T',' ').replace('+00:00',' UTC').slice(0,19),pen.wallQuad('j',R0,1.85,.01,.01,.1)[0],7,{wall:'j',tone:.6});
-      text(pen,'BUY '+r.counts.BUY+'  SELL '+r.counts.SELL+'  HOLD '+r.counts.HOLD+' OF '+r.asked.toLocaleString('en-US'),pen.wallQuad('j',R0,1.5,.01,.01,.1)[0],7,{wall:'j',tone:.75});
+    if(llm&&llm.replies){const r=llm.replies;
+      /* The wall cycles the times it actually traded, not the times it was asked: the finale
+         kept only its last 24 replies and all of them are HOLD, so nothing moved. The moments
+         below are its real fills, recovered from the logs by the exporter. */
+      const tr=llm.traded,list=tr&&tr.moments.length?tr.moments:null;
+      const k=list?((REPLY<0?0:REPLY)%list.length):0,now=list?list[k]:null;
+      if(now){
+        text(pen,'IT TRADED '+tr.count+' TIMES. HERE IS ONE:',pen.wallQuad('j',R0,2.86,.01,.01,.1)[0],6.4,{wall:'j',tone:.5});
+        text(pen,now[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4,ink:now[1]==='BUY'?'cyan':'magenta'});
+        text(pen,String(now[0]).replace('T',' ').replace('+00:00','').slice(0,16)+' UTC',pen.wallQuad('j',R0,1.88,.01,.01,.1)[0],7,{wall:'j',tone:.62});
+        text(pen,'FILL '+(k+1)+' OF '+list.length+' SHOWN  ·  '+tr.buys+' BUYS, '+tr.sells+' SELLS IN ALL',pen.wallQuad('j',R0,1.62,.01,.01,.1)[0],6,{wall:'j',tone:.45});
+      }else{
+        const q=REPLY<0?r.last.length-1:REPLY%r.last.length;
+        text(pen,'ITS LAST REPLY',pen.wallQuad('j',R0,2.86,.01,.01,.1)[0],6.4,{wall:'j',tone:.5});
+        text(pen,r.last[q][1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
+        text(pen,String(r.last[q][0]).replace('T',' ').replace('+00:00','').slice(0,16)+' UTC',pen.wallQuad('j',R0,1.88,.01,.01,.1)[0],7,{wall:'j',tone:.62});
+      }
+      // and what it said across the whole six months: it held almost every time it was asked
+      text(pen,'ASKED '+r.asked.toLocaleString('en-US')+':  BUY '+r.counts.BUY+'   SELL '+r.counts.SELL+'   HELD '+r.counts.HOLD.toLocaleString('en-US'),pen.wallQuad('j',R0,1.34,.01,.01,.1)[0],6.6,{wall:'j',tone:.75});
       // say what the number covers, from the data: a rehearsal is a day or two, not the vault
-      text(pen,money(llm.final_equity)+(fin.rehearsal?' IN THE REHEARSAL':' OVER THE LOCKED MONTHS'),pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
+      text(pen,money(llm.final_equity)+(fin.rehearsal?' IN THE REHEARSAL':' OVER THE LOCKED MONTHS'),pen.wallQuad('j',R0,1.02,.01,.01,.1)[0],8,{wall:'j',w:1})}
     else{text(pen,'WAITING FOR THE FINALE',pen.wallQuad('j',R0,2.3,.01,.01,.1)[0],12,{wall:'j',tone:.7,w:1.2});
       text(pen,fin&&fin.llm?fin.llm.model:'QWEN3.6 35B, LOCAL',pen.wallQuad('j',R0,1.7,.01,.01,.1)[0],7,{wall:'j',tone:.5})}
     pen.rug(1.6,3.2,4,3,{ink:'slate',tone:.12,border:'slate'});
@@ -562,6 +597,343 @@ room({id:'overfit',col:1,row:2,w:8,d:7,h:3.2,
         text(pen,tb+' gap '+(gap>=0?'+':'')+gap.toFixed(4),pen.wallQuad('i',.8,tb==='real'?2.95:2.7,.01,.01,.08)[0],6.5,{wall:'i',ink,w:.8})}}
   }});
 
+/* =====================  THE STREET  =====================
+   Outside, at night. The building's neon sign, and the swarm arriving for the shift. */
+room({id:'street',col:0,row:-1,w:12,d:7,h:4.8,shell:false,   // h frames the facade; shell:false draws no box
+  
+  draw(pen,t,R){
+    const p=pen.p;
+    // the pavement, and the kerb it ends at
+    pen.shape(pen.floorQuad(-.3,-.3,12.6,5.7,0),['slate',.16],{w:1.1});
+    pen.shape(pen.floorQuad(-.3,5.4,12.6,1.7,0),['slate',.07],{w:.8});
+    for(let k=0;k<13;k++)pen.line([p(k,5.4,.02),p(k+.55,5.4,.02)],'ghost',1.6,{tone:.28,amp:.5});
+
+    // the facade: a flat wall of windows, some lit, in front of everything
+    pen.shape([p(.4,.2,0),p(11.6,.2,0),p(11.6,.2,4.6),p(.4,.2,4.6)],['slate',.13],{w:1.3});
+    for(let r=0;r<4;r++)for(let c=0;c<11;c++){
+      const on=hash2(c,r,7)>.42, ink=on?(hash2(c,r,11)>.5?'cyan':'magenta'):'slate';
+      pen.shape([p(.85+c,.19,.55+r*1.02),p(1.62+c,.19,.55+r*1.02),
+                 p(1.62+c,.19,1.22+r*1.02),p(.85+c,.19,1.22+r*1.02)],
+                [ink,on?.30+.16*Math.abs(Math.sin(t*.4+c*1.7+r)):.06],{w:.6,lineTone:.35});
+    }
+    // the sign, hung over the door, breathing
+    const glow=.72+.28*Math.abs(Math.sin(t*.7));
+    text(pen,'NATURAL SELECTION',p(2.15,.17,3.62),30,{ink:'gold',w:2.6,tone:glow,gap:.3});
+    text(pen,'CAPITAL',p(5.0,.17,2.72),30,{ink:'gold',w:2.6,tone:glow,gap:.3});
+    pen.glow(6,1.1,3.2,3.4,'gold',.10*glow);
+    // the door, and the light it throws on the pavement
+    pen.shape([p(5.5,.18,0),p(6.9,.18,0),p(6.9,.18,1.7),p(5.5,.18,1.7)],['amber',.2],{w:1,line:'amber'});
+    pen.shape(pen.floorQuad(5.4,.25,1.6,2.35,0),['amber',.1],{line:false});
+
+    // the shift arriving: the whole population, streaming in through the door
+    const n=RUN?RUN.population:100;
+    for(let k=0;k<Math.min(n,46);k++){
+      const S=stream('street',k),ph=rand(S,0,TAU),sp=rand(S,.10,.22);
+      const u=((t*sp+rand(S,0,1))%1);                 // 0 at the kerb, 1 at the door
+      const i=lerp(rand(S,-.5,12.5),6.2,ease(u)), j=lerp(rand(S,3.4,6.6),.7,ease(u));
+      pen.fly(i,j,.25+Math.sin(t*2+ph)*.12+u*.5,
+              {t,pose:'hover',ink:k%2?'cyan':'magenta',tone:.35+.4*(1-u),scale:.8+u*.5,
+               facing:i>6.2?-1:1,phase:ph,noShadow:true,glowStrength:.55});
+    }
+    textCentred(pen,'THE NIGHT SHIFT CLOCKS IN',p(6,6.5,.02),13,{ink:'ghost',tone:.5,w:1.2});
+    pen.lamp(.7,3.4,{t,h:3.2});pen.lamp(11.3,3.4,{t,h:3.2});
+  }});
+
+/* =====================  THE SERVER ROOM  =====================
+   The Spark that ran it, and how long it took, from the run's own clock. */
+room({id:'server',col:2,row:-1,w:8,d:7,h:3.2,
+  style:{floor:['slate',.26],wall:['slate',.1],wall2:['slate',.13],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,meta=RUN&&RUN.run;
+    text(pen,'THE SERVER ROOM',pen.wallQuad('i',.6,2.66,.01,.01,.06)[0],14,{wall:'i',w:1.3});
+    if(meta){
+      text(pen,fmtMin(meta.minutes_per_generation)+' A GENERATION',pen.wallQuad('i',.6,2.3,.01,.01,.06)[0],7,{wall:'i',tone:.7,ink:'gold'});
+      text(pen,fmtMin(meta.minutes_total)+' IN ALL, '+RUN.generations+' GENERATIONS',pen.wallQuad('i',.6,2.04,.01,.01,.06)[0],6.2,{wall:'i',tone:.5});
+    }
+    // the box itself: one small machine doing all of it
+    pen.box(3.1,2.4,0,1.5,1.2,.9,{ink:'slate',tone:.4,w:1});
+    for(let k=0;k<7;k++){
+      const lit=(Math.floor(t*3)+k)%7<3;
+      pen.dot(...p(3.3+k*.17,2.35,.92),2,lit?'cyan':'slate',lit?.95:.3);
+    }
+    pen.glow(3.85,3,.9,2.1,'cyan',.13+.05*Math.sin(t*1.6));
+    text(pen,'DGX SPARK',pen.wallQuad('i',3.2,.02,.01,.01,2.36)[0],6,{wall:'i',tone:.6});
+
+    /* the time-lapse: one tick per generation, filling as the run advances. The bar is the
+       run's own clock - every tick is one logged generation, no more. */
+    const n=RUN?RUN.generations:1;
+    for(let k=0;k<n;k++){
+      const done=k<=GEN,u=k/Math.max(1,n-1);
+      pen.tint(pen.wallQuad('j',.7+u*4.6,.9,.12,done?.5+.5*Math.sin(t*2+k)*.08:.14,.05),
+               done?'gold':'slate',done?.8:.25);
+    }
+    text(pen,'GENERATION '+S3(F().generation)+' OF '+S3(n-1),pen.wallQuad('j',5.6,.55,.01,.01,.05)[0],6.4,{wall:'j',tone:.6});
+    if(meta)text(pen,fmtMin(meta.minutes_per_generation*(GEN+1))+' ELAPSED',pen.wallQuad('j',5.6,1.65,.01,.01,.05)[0],7,{wall:'j',ink:'gold',tone:.8});
+    // cable trays and a sleeping operator
+    for(let k=0;k<5;k++)pen.line([p(.5,4.4+k*.16,.04),p(7.4,4.4+k*.16,.04)],'slate',1.4,{tone:.3,amp:.6});
+    pen.table(5.6,5.6,1.8,1.2,.75,{ink:'slate',tone:.3});
+    pen.fly(5.9,5.9,.76,{t,pose:'sit',ink:'slate',scale:1.5,phase:1.9});
+    pen.lamp(7.2,1.3,{t});
+  }});
+
+/* =====================  THE EYE ROOM  =====================
+   What a fly is actually shown: the last 64 bars, thrown onto its own compound eye. */
+room({id:'eye',col:2,row:2,w:8,d:7,h:3.4,
+  style:{floor:['slate',.28],wall:['slate',.1],wall2:['slate',.13],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,day=(RUN.windows&&RUN.windows[0])||null,bars=(day&&day.candles)||[];
+    text(pen,'THE EYE ROOM',pen.wallQuad('i',.55,2.9,.01,.01,.06)[0],14,{wall:'i',w:1.3});
+    text(pen,(RUN.brain?RUN.brain.photoreceptors.toLocaleString('en-US'):'')+' PHOTORECEPTORS',
+         pen.wallQuad('i',.55,2.54,.01,.01,.06)[0],6.4,{wall:'i',tone:.6});
+    text(pen,'THE SAME EYE FOR BOTH TRIBES',pen.wallQuad('i',.55,2.3,.01,.01,.06)[0],6,{wall:'i',tone:.45});
+
+    /* the eye: a hex field. A cell lights when the chart passes over its column, so the
+       firing pattern is the candles' own shape and not an animation invented here. */
+    const cx=3.9,cy=3.1,rows=9,lit=[];
+    for(let r=0;r<rows;r++){
+      const cols=rows-Math.abs(r-((rows-1)/2|0))-1;
+      for(let c=0;c<cols;c++){
+        const i=cx-cols*.33+c*.66+(r%2)*.16, j=cy+(r-rows/2)*.52, z=1.9+Math.cos((r-rows/2)/rows*2.2)*.45;
+        const u=clamp((c+.5)/cols,0,1);
+        const bar=bars.length?bars[Math.min(bars.length-1,Math.floor(u*bars.length))]:null;
+        let on=0;
+        if(bar){
+          const lo=Math.min(...bars.map(q=>q[2])),hi=Math.max(...bars.map(q=>q[1]));
+          const h=(bar[3]-lo)/Math.max(1e-9,hi-lo);              // this bar's close, 0..1 up the eye
+          const mine=1-(r+.5)/rows;
+          on=Math.max(0,1-Math.abs(h-mine)*7);
+        }
+        const fire=on*(.55+.45*Math.sin(t*3+r*.7+c*.4));
+        pen.shape(ellipse2(...p(i,j,z),17,13,0,6),['cyan',.06+fire*.8],{w:1,line:'cyan',lineTone:.45});
+        if(fire>.5)lit.push(p(i,j,z));
+      }
+    }
+    for(const q of lit)pen.halo(q[0],q[1],13,'cyan',.26);
+    pen.glow(cx,cy,1.4,3.2,'cyan',.10);
+
+    // the projector throwing the chart, and the chart itself on the side wall
+    pen.box(.7,5.9,0,.6,.5,.5,{ink:'slate',tone:.4});
+    pen.line([p(1.2,5.8,.5),p(cx-.9,cy+.5,1.4)],'ghost',1,{tone:.3,amp:1.2});
+    pen.shape(pen.wallQuad('j',.7,.75,3.1,1.25,.05),['slate',.1],{w:1});
+    if(bars.length){
+      const lo=Math.min(...bars.map(q=>q[2])),hi=Math.max(...bars.map(q=>q[1]));
+      bars.forEach((b,k)=>{
+        const u=.85+k/bars.length*2.8, Z=v=>.9+(v-lo)/Math.max(1e-9,hi-lo)*.95;
+        pen.line([pen.wallQuad('j',u,Z(b[2]),.01,.01,.05)[0],pen.wallQuad('j',u,Z(b[1]),.01,.01,.05)[0]],
+                 b[3]>=b[0]?'cyan':'magenta',1.1,{tone:.55,amp:.15});
+      });
+    }
+    text(pen,'64 BARS, SCALED TO THEMSELVES',pen.wallQuad('j',3.9,.5,.01,.01,.05)[0],6,{wall:'j',tone:.5});
+    pen.fly(6.6,5.7,0,{t,pose:'hover',ink:'slate',scale:1.2,facing:-1,phase:1.3});
+    pen.lamp(7.3,1.2,{t});
+  }});
+
+/* =====================  THE SWITCHBOARD  =====================
+   The genome: every number a fly inherits, and the handful a child had changed. */
+room({id:'switchboard',col:3,row:2,w:9,d:7,h:3.2,
+  style:{floor:['slate',.28],wall:['slate',.1],wall2:['slate',.13],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,size=RUN&&RUN.run?RUN.run.genome_size:null,f=F();
+    text(pen,'THE SWITCHBOARD',pen.wallQuad('i',.55,2.74,.01,.01,.06)[0],14,{wall:'i',w:1.3});
+    if(size)text(pen,size.toLocaleString('en-US')+' DIALS ON EVERY FLY',pen.wallQuad('i',.55,2.4,.01,.01,.06)[0],6.6,{wall:'i',tone:.65,ink:'gold'});
+    text(pen,'ENCODER GAINS AND READOUT WEIGHTS.',pen.wallQuad('i',.55,2.16,.01,.01,.06)[0],5.8,{wall:'i',tone:.45});
+    text(pen,'THE WIRING NEVER MOVES.',pen.wallQuad('i',.55,1.96,.01,.01,.06)[0],5.8,{wall:'i',tone:.45});
+
+    /* The panel stands for the genome: rows x cols = the dial count the run logged, drawn at a
+       readable density. Which dials flicker is this room's own seeded scatter, redrawn each
+       generation - it shows THAT a child differs in a few places, never by how much. */
+    const cols=44,rows=size?Math.max(1,Math.round(size/cols)):24;
+    const S=stream('switchboard',GEN);
+    const changed=new Set();
+    for(let k=0;k<26;k++)changed.add(randi(S,0,cols*rows-1));
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      const idx=r*cols+c;if(size&&idx>=size)continue;
+      const i=.6+c*.175, z=2.6-r*.082;
+      const hot=changed.has(idx);
+      const fl=hot?(.35+.65*Math.abs(Math.sin(t*5+idx))):0;
+      pen.tint(pen.wallQuad('j',i,z,.11,.05,.05),hot?'gold':'slate',hot?.35+fl*.6:.20);
+    }
+    text(pen,'26 DIALS MOVED IN THIS GENERATION’S CHILDREN',pen.wallQuad('j',7.9,.62,.01,.01,.05)[0],6,{wall:'j',ink:'gold',tone:.7});
+    text(pen,f.tribes.real.born.child+' CHILDREN, '+f.tribes.real.born.newcomer+' STRANGERS, EACH TRIBE',
+         pen.wallQuad('j',7.9,.4,.01,.01,.05)[0],5.8,{wall:'j',tone:.5});
+
+    // a bench, a technician, and the hum
+    pen.table(2.6,4.4,3,1.3,.78,{ink:'slate',tone:.3});
+    pen.fly(3.1,4.7,.79,{t,pose:'sit',ink:'gold',tone:.8,scale:1.5,phase:.6,glowStrength:.8});
+    pen.glow(4.4,2.6,1.6,2.6,'gold',.07);
+    pen.plant(8.2,6.1,0,{t,size:1});pen.lamp(.8,1.4,{t});
+  }});
+
+/* =====================  THE TOLL BOOTH  =====================
+   What the trading cost. Every trade drops a coin; the counters are the logged fee bill. */
+room({id:'toll',col:0,row:3,w:8,d:7,h:3,
+  style:{floor:['slate',.3],wall:['slate',.12],wall2:['slate',.14],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=F();
+    text(pen,'THE TOLL BOOTH',pen.wallQuad('i',.55,2.56,.01,.01,.06)[0],14,{wall:'i',w:1.3});
+    text(pen,RUN.fee_bps.toFixed(1)+' BPS A SIDE, EVERY TRADE, EVERY FLY',pen.wallQuad('i',.55,2.22,.01,.01,.06)[0],6,{wall:'i',tone:.55});
+
+    RUN.tribes.forEach((tb,k)=>{
+      const row=f.tribes[tb],ink=TRIBE_INK[tb],j=1.5+k*2.5;
+      /* the fee bill, from the logs: the same flies scored through a wallet with no fee, minus
+         the score selection actually used. Nothing here is modelled. */
+      const cost=row.fee_free?row.fee_free.equity.median-row.equity.median:null;
+      pen.box(.8,j,0,1.1,1.1,1.1,{ink:'slate',tone:.34,w:.9});          // the booth
+      const z0=1.86-k*.74;                                // clear of the title above
+      text(pen,tb.toUpperCase(),pen.wallQuad('i',2.4,z0,.01,.01,.06)[0],8.5,{wall:'i',ink,w:1});
+      text(pen,row.trades.median_per_day.toFixed(2)+' TRADES A DAY',pen.wallQuad('i',2.4,z0-.24,.01,.01,.06)[0],6,{wall:'i',ink,tone:.7});
+      if(cost!=null)
+        text(pen,money(cost)+' A DAY IN FEES',pen.wallQuad('i',2.4,z0-.46,.01,.01,.06)[0],6.4,{wall:'i',ink:'amber',tone:.85});
+
+      /* one falling coin per trade a day, so the two lanes differ by exactly what the logs say */
+      const n=Math.min(22,Math.round(row.trades.median_per_day*2.5));
+      for(let q=0;q<n;q++){
+        const S=stream('toll',tb,q),ph=rand(S,0,1);
+        const u=((t*.5+ph)%1), i=2.0+rand(S,0,4.4);
+        pen.dot(...p(i,j+.5,1.9-u*1.75),2.6,'amber',.35+.6*(1-u));
+        if(u>.93)pen.halo(...p(i,j+.5,.12),7,'amber',.4);
+      }
+      // the pile the lane has dropped
+      for(let q=0;q<Math.min(14,Math.round(row.trades.median_per_day));q++){
+        const S=stream('tollpile',tb,q);
+        pen.dot(...p(2.1+rand(S,0,4.2),j+.4+rand(S,-.2,.2),.05),2.2,'amber',.35);
+      }
+      pen.fly(1.1,j+.3,1.12,{t,pose:'stand',ink,scale:1.1,phase:k*1.4,facing:1});
+    });
+    text(pen,'THE FEE IS THE SAME FOR BOTH. THE BILL IS NOT.',pen.wallQuad('j',6.8,.45,.01,.01,.05)[0],6.2,{wall:'j',tone:.55,ink:'amber'});
+    pen.lamp(7.4,1.1,{t});
+  }});
+
+/* =====================  THE BOARDROOM  =====================
+   The finale, as a table: a nameplate each, and a chair that goes over when it loses. */
+room({id:'boardroom',col:1,row:3,w:9,d:7,h:3.2,
+  style:{floor:['slate',.3],wall:['slate',.12],wall2:['slate',.15],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,fin=RUN&&RUN.finale;
+    text(pen,'THE BOARDROOM',pen.wallQuad('i',.5,2.78,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!fin){text(pen,'SEATS RESERVED FOR THE FINALE',pen.wallQuad('i',.5,2.44,.01,.01,.06)[0],7,{wall:'i',tone:.55});
+      pen.table(2.6,3,4,2,.78,{ink:'slate',tone:.3});pen.lamp(8.2,1.2,{t});return}
+
+    const T=fin.passes.with_fees.traders;
+    const rows=Object.entries(T).sort((a,b)=>b[1].final_equity-a[1].final_equity);
+    const bh=T.buy_and_hold?T.buy_and_hold.final_equity:RUN.start_cash;
+    const inkOf=n=>n.startsWith('real')?'cyan':n.startsWith('scrambled')?'magenta':n==='llm'?'ghost':'slate';
+    const label=n=>n.replace(/_champions/,'').replace(/_/g,' ').toUpperCase();
+    text(pen,'THE LOCKED SIX MONTHS, WITH FEES',pen.wallQuad('i',.5,2.5,.01,.01,.06)[0],6,{wall:'i',tone:.5});
+
+    /* the scoreboard on the wall: one ranked row per trader, every figure from the finale */
+    pen.shape(pen.wallQuad('i',.5,.45,7.9,1.85,.05),['slate',.09],{w:1.1});
+    const lo=Math.min(...rows.map(r=>r[1].final_equity))*.96,hi=Math.max(...rows.map(r=>r[1].final_equity))*1.02;
+    rows.forEach(([name,r],k)=>{
+      const z=2.06-k*.28,ink=inkOf(name);
+      text(pen,label(name),pen.wallQuad('i',.75,z,.01,.01,.1)[0],6.4,{wall:'i',ink,w:.9});
+      pen.tint(pen.wallQuad('i',3.5,z-.03,3.1*(r.final_equity-lo)/(hi-lo)+.05,.13,.11),ink,.62);
+      text(pen,money(r.final_equity),pen.wallQuad('i',6.85,z,.01,.01,.1)[0],6.8,{wall:'i',ink,w:1});
+    });
+
+    /* the table, and a chair a side. A chair is on its back when that trader finished below
+       buying and holding - which is six of the seven, and the point of the room. */
+    pen.rug(1.1,2.2,7,4.2,{ink:'slate',tone:.09,border:'slate'});
+    pen.table(2.3,3.3,4.6,2.2,.8,{ink:'slate',tone:.34});
+    rows.slice(0,6).forEach(([name,r],k)=>{
+      const near=k<3, i=2.5+(k%3)*1.7, j=near?2.35:5.85, ink=inkOf(name),lost=r.final_equity<bh;
+      if(lost){
+        // on its back: the seat flat on the floor, the legs in the air, and nobody in it
+        pen.shade(pen.floorQuad(i-.05,j+.05,.62,.62,0),.5);
+        pen.shape(pen.floorQuad(i,j,.6,.6,.02),[ink,.14],{w:.8,line:ink,lineTone:.5});
+        for(const [a,b] of [[i+.08,j+.08],[i+.44,j+.08],[i+.08,j+.44],[i+.44,j+.44]])
+          pen.line([p(a,b,.03),p(a,b,.34)],ink,1.4,{tone:.55,amp:.5});
+        pen.line([p(i,j+.6,.02),p(i+.6,j+.6,.02),p(i+.6,j+.6,.42)],ink,1.2,{tone:.35,amp:.6});
+      }else{
+        pen.chair(i,j,{ink,tone:.55,back:near?'j':'i'});
+        pen.fly(i+.25,j+.2,.44,{t,pose:'sit',ink,scale:1.2,phase:k*.8,glowStrength:.8});
+      }
+      // the nameplate on the table in front of the seat
+      const nj=near?3.35:4.95;
+      pen.shape([p(i-.15,nj,.81),p(i+.75,nj,.81),p(i+.75,nj+.03,.95),p(i-.15,nj+.03,.95)],['slate',.2],{w:.6});
+      text(pen,label(name),p(i-.1,nj+.02,.93),4.8,{ink,tone:.95,w:.8,gap:.28});
+    });
+    text(pen,'A CHAIR IS ON ITS BACK WHERE THAT TRADER FINISHED BELOW BUY AND HOLD, '+money(bh),
+         pen.wallQuad('j',8.5,.42,.01,.01,.05)[0],5.6,{wall:'j',tone:.55});
+    pen.lamp(8.5,1.1,{t});
+  }});
+
+/* =====================  THE SIX-MONTH CORRIDOR  =====================
+   The champion walking the locked test end to end, its equity trailing behind it. */
+room({id:'corridor',col:2,row:3,w:12,d:5,h:3,
+  style:{floor:['slate',.26],wall:['slate',.1],wall2:['slate',.12],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,fin=RUN&&RUN.finale;
+    text(pen,'THE SIX-MONTH CORRIDOR',pen.wallQuad('i',.55,2.56,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!fin){text(pen,'SEALED UNTIL THE FINALE',pen.wallQuad('i',.55,2.2,.01,.01,.06)[0],7,{wall:'i',tone:.5});pen.lamp(11,1.1,{t});return}
+    const champ=fin.passes.with_fees.traders.real_champions;
+    const curve=champ&&champ.curve||[];
+
+    // a door for every month the locked set spans, from the finale's own dates
+    const A=new Date(fin.first_time),B=new Date(fin.last_time);
+    const months=Math.max(1,Math.round((B-A)/(1000*60*60*24*30.44)));
+    const NAMES=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    for(let m=0;m<months;m++){
+      const i=.9+m*(10.4/months);
+      pen.shape([p(i,.12,0),p(i+1.3,.12,0),p(i+1.3,.12,1.9),p(i,.12,1.9)],['slate',.1],{w:1,line:'ghost',lineTone:.35});
+      text(pen,NAMES[(A.getUTCMonth()+m)%12],pen.wallQuad('i',i+.28,2.06,.01,.01,.11)[0],7,{wall:'i',tone:.55});
+    }
+
+    /* the equity trail: the champions' logged curve, drawn along the corridor as far as the
+       walker has got. The walk loops on the room clock; the line is the finale's. */
+    const u=(t*.07)%1, upto=Math.max(2,Math.floor(curve.length*u));
+    const lo=Math.min(...curve),hi=Math.max(...curve);
+    const X=k=>.8+k/Math.max(1,curve.length-1)*10.6, Z=v=>.35+(v-lo)/Math.max(1e-9,hi-lo)*1.25;
+    const start=RUN.start_cash;
+    pen.line([p(.8,2.5,Z(start)),p(11.4,2.5,Z(start))],'ghost',.7,{tone:.3,dash:[5,5],amp:0});
+    const trail=[];for(let k=0;k<upto;k++)trail.push(p(X(k),2.5,Z(curve[k])));
+    if(trail.length>1)pen.line(trail,'cyan',1.8,{amp:.2});
+    const here=trail[trail.length-1];
+    if(here){pen.halo(here[0],here[1],9,'cyan',.5);
+      text(pen,money(curve[upto-1]),[here[0]+14,here[1]-14],9,{ink:'cyan',w:1.2});}
+
+    // the champion, walking it
+    pen.fly(.8+u*10.6,3.3,.05+Math.abs(Math.sin(t*4))*.12,
+            {t,pose:'hover',ink:'cyan',scale:1.5,facing:1,phase:.2,glowStrength:1.1,noShadow:true});
+    text(pen,'REAL CHAMPIONS, EVERY BAR, '+money(champ.final_equity)+' AT THE END',
+         pen.wallQuad('j',4.6,.42,.01,.01,.05)[0],6,{wall:'j',tone:.6,ink:'cyan'});
+    pen.lamp(11.3,1.2,{t});
+  }});
+
+/* =====================  THE LINEAGE GALLERY  =====================
+   The hero's ancestors, one portrait each, oldest first. */
+room({id:'gallery',col:3,row:3,w:8,d:7,h:3.2,
+  style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,h=F().heroes.real,line=[...h.ancestors,h.id],n=line.length;
+    text(pen,'THE LINEAGE GALLERY',pen.wallQuad('i',.5,2.78,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    text(pen,n+' GENERATIONS OF ONE FAMILY, OLDEST FIRST',pen.wallQuad('i',.5,2.48,.01,.01,.06)[0],6,{wall:'i',tone:.55});
+
+    /* one row of portraits, the frame width divided by however long the lineage is, so it
+       never wraps off the wall however many ancestors the run logged */
+    const pad=.45,span=7.9-pad*2,wF=Math.min(1.5,span/n),gap=(span-wF*n)/Math.max(1,n-1);
+    line.forEach((id,k)=>{
+      const i=pad+k*(wF+gap), z=.95, live=k===n-1;
+      pen.shape(pen.wallQuad('i',i,z,wF,1.12,.05),['slate',.13],
+                {w:1.1,line:live?'gold':'ghost',lineTone:live?.95:.4});
+      // the sitter, standing in its own frame and facing out of it
+      pen.fly(i+wF/2,.08,z+.24,{t,pose:'stand',ink:live?'gold':'cyan',tone:live?1:.62,
+                                scale:live?1.25:1,phase:k*.9,facing:1,noShadow:true,
+                                glowStrength:live?1.3:.45});
+      text(pen,id.replace(/^real-/,''),pen.wallQuad('i',i+.08,z+.06,.01,.01,.06)[0],4.6,
+           {wall:'i',ink:live?'gold':'ghost',tone:live?.95:.5});
+      if(live)pen.halo(...pen.wallQuad('i',i+wF/2,z+.62,.01,.01,.06)[0],26,'gold',.14);
+      if(k<n-1)   // the thread from parent to child
+        pen.line([pen.wallQuad('i',i+wF,z+.55,.01,.01,.06)[0],
+                  pen.wallQuad('i',i+wF+gap,z+.55,.01,.01,.06)[0]],'gold',1,{tone:.35,amp:.7});
+    });
+    text(pen,'BORN GENERATION '+S3(h.born)+'  \u00B7  '+h.generations_lived+' GENERATION(S) ALIVE',
+         pen.wallQuad('j',6.9,.5,.01,.01,.05)[0],6,{wall:'j',ink:'gold',tone:.7});
+    pen.rug(2.4,4.8,3.2,1.6,{ink:'slate',tone:.1,border:'slate'});
+    pen.fly(6,5.6,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:2.6});
+    pen.lamp(7.4,1.2,{t});
+  }});
+
 /* =====================  THE OVERLAY  =====================
    What lives between rooms: a night sky, the building's sign, and the hero on its rounds. */
 const buildingBounds=()=>ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);
@@ -588,7 +960,8 @@ function overlay(pen,t,a,b){
    shot by shot - a room, then sometimes a push in on its detail - or follows the hero, or
    pulls back to the whole building. Everything runs on NOW(), so the recorder can step it. */
 const MS_PER_GEN=3600,SEL_FROM=.45,SHOT_MS=4400,HERO_LEG_MS=5200,HERO_ZOOM=2.3;
-const ROOM_ORDER=['lab','brain','floor','pile','nursery','hero','archive','overfit','model','vault'];
+const ROOM_ORDER=['street','lab','server','brain','eye','floor','pile','nursery','switchboard',
+                 'hero','gallery','archive','overfit','toll','model','corridor','boardroom','vault'];
 const SHOTS=[{room:'lab'},{room:'lab',focus:[4.9,3.2,1.0],zoom:2.4},{room:'brain'},{room:'floor'},
   {room:'floor',focus:[5,.2,2.3],zoom:1.9},{room:'pile'},{room:'nursery'},{room:'hero'},
   {room:'hero',focus:[3.3,4.6,1.3],zoom:2.5},{room:'archive'},{room:'overfit'},{room:'model'},
@@ -665,9 +1038,63 @@ function wireUI(){
     else if(e.key===']'){PLAYING=false;SEL=1;setGeneration(GEN+1)}
     else if(e.key==='t')openTerminal(!ui.inset.classList.contains('open'));
     else if(e.key==='b')building();
-    else if(e.key==='h')ui.herocam.onclick();
+    else if(e.key==='y')ui.herocam.onclick();
+    else director(e);
   });
+  buildLegend();
 }
+/* =====================================================================
+   DIRECTOR MODE - record by hand, with the camera on the keyboard.
+   Every key here only moves the camera or the generation pointer; none of them can change a
+   number, so a hand-recorded take shows exactly what an automatic one would.
+   ===================================================================== */
+const DIRECTOR=[
+  ['1 - 9, 0','the first ten rooms'],
+  [', .','the room before / after (all '+0+')'],
+  ['\u2190 \u2191 \u2193 \u2192','pan       (also W A S D)'],
+  ['+  -','zoom in / out'],
+  ['[  ]','a generation back / on'],
+  ['SPACE','play / pause'],
+  ['SHIFT (hold)','slow motion, and fine pan'],
+  ['B  Y  T','building / hero cam / terminal'],
+  ['H','hide everything for a clean take'],
+  ['F','fullscreen'],
+  ['P','save this frame as a png'],
+];
+function buildLegend(){
+  DIRECTOR[1][1]='the room before / after (all '+ROOM_ORDER.length+')';
+  const el=document.getElementById('legend');if(!el)return;
+  el.innerHTML=DIRECTOR.map(([k,what])=>`<b>${k}</b><span>${what}</span>`).join('');
+}
+function hideAll(on){
+  document.body.classList.toggle('clean',on);
+  document.body.classList.toggle('hidden-ui',on);
+}
+function director(e){
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  const k=e.key;
+  const digits='1234567890';
+  if(digits.includes(k)&&ROOM_ORDER.length){
+    const idx=(digits.indexOf(k));if(idx<ROOM_ORDER.length){goToRoom(ROOM_ORDER[idx],700);e.preventDefault()}return;
+  }
+  if(k===','||k==='.'){
+    const here=ROOMS.find(r=>r.id&&document.querySelector(`#rooms button[data-room="${r.id}"].on`));
+    let i=here?ROOM_ORDER.indexOf(here.id):0;
+    i=(i+(k==='.'?1:-1)+ROOM_ORDER.length)%ROOM_ORDER.length;
+    goToRoom(ROOM_ORDER[i],700);e.preventDefault();return;
+  }
+  if(k==='h'||k==='H'){hideAll(!document.body.classList.contains('hidden-ui'));e.preventDefault();return}
+  if(k==='f'||k==='F'){
+    if(document.fullscreenElement)document.exitFullscreen();
+    else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();
+    e.preventDefault();return;
+  }
+}
+// slow motion lives on the shift key, held: the world eases, and the pan step shrinks with it
+addEventListener('keydown',e=>{if(e.key==='Shift')RATE=.25});
+addEventListener('keyup',e=>{if(e.key==='Shift')RATE=1});
+addEventListener('blur',()=>{RATE=1});
+
 async function loadRun(){
   if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
   const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});

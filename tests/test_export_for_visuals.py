@@ -11,7 +11,7 @@ import pytest
 
 import scripts.export_for_visuals as exporter
 from scripts.export_for_visuals import (brain_block, candles_for, check, frame_of, generations,
-                                          locked_block, seats)
+                                          locked_block, seats, traded_moments)
 
 POPULATION = 6
 
@@ -174,3 +174,58 @@ def test_the_vault_reads_the_locked_set_from_the_split_and_never_from_the_parque
 def test_a_project_without_a_split_file_simply_has_no_vault_figures(tmp_path, monkeypatch):
     monkeypatch.setattr(exporter, "REPO", tmp_path)
     assert locked_block() is None
+
+
+FEE = 5.0 / 1e4
+
+
+def a_finale(fills=(3, 7, 11, 15), bars=40, every=4, logged_trades=None):
+    """A finale where the model's fills are known, so what is recovered can be compared.
+
+    The fee-free wallet is a flat line; the with-fees one is the same line with one fee taken
+    out at each fill. That is exactly the relationship the real passes have, which is what makes
+    the fills recoverable at all."""
+    free = [1000.0] * bars
+    fee, taken = [], 1.0
+    for k in range(bars):
+        if k in fills:
+            taken *= 1 - FEE
+        fee.append(free[k] * taken)
+    llm = lambda equity: {"equity": equity, "trades": len(fills) if logged_trades is None else logged_trades,
+                          "decisions": bars // every, "bars_between_decisions": every,
+                          "replies": {"asked": bars // every, "counts": {"BUY": 2, "SELL": 2, "HOLD": 6},
+                                      # the last decision sits at bar (bars//every - 1) * every,
+                                      # which on this five-minute grid is 03:00
+                                      "last": [["2026-01-01T03:00:00+00:00", "HOLD"]]}}
+    return {"first_time": "2026-01-01T00:00:00+00:00", "last_time": "2026-01-01T03:15:00+00:00",
+            "bars": bars,
+            "passes": {"with_fees": {"fee_bps": 5.0, "competitors": {"llm": llm(fee)}},
+                       "no_fees": {"fee_bps": 0.0, "competitors": {"llm": llm(free)}}}}
+
+
+def test_the_model_s_fills_are_recovered_from_the_fee_step():
+    """Nothing but a fill can move the ratio between the two passes, so every step is one."""
+    out = traded_moments(a_finale(fills=(3, 7, 11, 15)))
+    assert out["count"] == 4 and out["buys"] == 2 and out["sells"] == 2
+    assert [side for _stamp, side in out["moments"]] == ["BUY", "SELL", "BUY", "SELL"]
+
+
+def test_fills_that_disagree_with_the_logged_trade_count_are_refused():
+    """The wall must never show a trade the logs do not contain (PLAN.md rule 8), so a
+    reconstruction that does not match the count the run logged is not exported at all."""
+    with pytest.raises(SystemExit, match="logged 9 trades"):
+        traded_moments(a_finale(fills=(3, 7, 11, 15), logged_trades=9))
+
+
+def test_a_clock_too_coarse_to_print_is_refused():
+    """The times are interpolated, then checked against the timestamps the run really logged."""
+    raw = a_finale(fills=(3, 7))
+    raw["passes"]["with_fees"]["competitors"]["llm"]["replies"]["last"] = [["2026-01-01T00:00:00+00:00", "HOLD"]]
+    with pytest.raises(SystemExit, match="interpolated clock"):
+        traded_moments(raw)
+
+
+def test_a_finale_with_no_fee_free_twin_recovers_nothing_rather_than_guessing():
+    raw = a_finale(fills=(3, 7))
+    del raw["passes"]["no_fees"]
+    assert traded_moments(raw) is None

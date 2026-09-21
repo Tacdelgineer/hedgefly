@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -157,6 +157,18 @@ def brain_block(run_dir: Path) -> dict | None:
     return json.loads(path.read_text()).get("brain")
 
 
+def run_block(run_dir: Path) -> dict | None:
+    """What the run cost and how big a genome is: the Switchboard's dial count and the Server
+    Room's clock, both out of the run's own run_summary.json."""
+    path = run_dir / "run_summary.json"
+    if not path.exists():
+        return None
+    summary = json.loads(path.read_text())
+    keep = ("genome_size", "minutes_per_generation", "minutes_total")
+    out = {k: summary[k] for k in keep if k in summary}
+    return out or None
+
+
 def locked_block() -> dict | None:
     """What the vault holds, from `data/split.json`.
 
@@ -169,6 +181,80 @@ def locked_block() -> dict | None:
     locked = json.loads(path.read_text())["locked"]
     return {"rows": locked["rows"], "first": locked["first"], "last": locked["last"],
             "source": "data/split.json"}
+
+
+def traded_moments(raw: dict, name: str = "llm", want_pairs: int = 24) -> dict | None:
+    """When a trader was actually in the market, recovered exactly from two logged curves.
+
+    The finale logs how many times the model traded (292) and what it replied in the last 24
+    calls, but not a trade log, so nothing says *when* it bought. Two logged series together do:
+    the fee-free pass replays the with-fees pass decision for decision, so the ratio between the
+    two equity curves is flat except at a fill, where the fee knocks the with-fees wallet down by
+    exactly one fee_bps. Every step in that ratio is one fill and nothing else can make one.
+
+    Starting flat, fills alternate BUY, SELL, BUY. The count is checked against the trades the
+    run logged and this refuses to guess if they disagree, so a wall can never show a moment the
+    logs do not contain (PLAN.md rule 8)."""
+    passes = raw.get("passes", {})
+    fee_block = passes.get("with_fees", {}).get("competitors", {}).get(name)
+    free_block = passes.get("no_fees", {}).get("competitors", {}).get(name)
+    if not fee_block or not free_block or "equity" not in fee_block:
+        return None
+    fee = float(passes["with_fees"]["fee_bps"]) / 1e4
+    if fee <= 0:
+        return None
+
+    ratio = [w / n for w, n in zip(fee_block["equity"], free_block["equity"]) if n]
+    bars = [k for k in range(1, len(ratio)) if ratio[k] < ratio[k - 1] * (1 - fee / 2)]
+    logged = fee_block.get("trades")
+    if logged is not None and len(bars) != logged:
+        raise SystemExit(f"{name}: recovered {len(bars)} fills from the fee ratio but the run "
+                         f"logged {logged} trades; not exporting a trade the logs do not show")
+
+    # Bar -> clock. The finale logs no per-bar timestamp, and the candles that carry one are the
+    # locked set, which only the finale scripts may open (rule 3). So the clock is interpolated
+    # across the run's own first_time..last_time - and then checked against the real timestamps
+    # the run did log, on its last replies, before any of it is allowed out.
+    first = datetime.fromisoformat(raw["first_time"])
+    minutes = (datetime.fromisoformat(raw["last_time"]) - first).total_seconds() / 60 / max(1, raw["bars"] - 1)
+    every = int(fee_block.get("bars_between_decisions", 1))
+    raw_at = lambda bar: first + timedelta(minutes=minutes * bar)
+
+    replies = (fee_block.get("replies") or {}).get("last") or []
+    drift = 0.0
+    if replies:
+        n = int(fee_block["decisions"])
+        for i, (stamp, _word) in enumerate(replies):
+            bar = (n - len(replies) + i) * every
+            drift = max(drift, abs((raw_at(bar) - datetime.fromisoformat(stamp)).total_seconds() / 60))
+        if drift > every * minutes / 2:
+            raise SystemExit(f"{name}: the interpolated clock is {drift:.0f} min out against the "
+                             f"timestamps the run logged, more than half a decision apart; "
+                             f"not exporting times this coarse")
+
+    # Bars sit on real five-minute marks of the clock, so the interpolated time is rounded onto
+    # that grid: within the measured drift the result is the bar's own timestamp, and at worst
+    # it names the neighbouring bar.
+    grid = round(minutes)                                  # 5, for five-minute candles
+    def at(bar):
+        t = raw_at(bar).replace(second=0, microsecond=0, tzinfo=raw_at(bar).tzinfo)
+        t += timedelta(minutes=round(raw_at(bar).second / 60))
+        return (t - timedelta(minutes=t.minute % grid)
+                + timedelta(minutes=grid if t.minute % grid >= grid / 2 else 0)).isoformat()
+
+    # every other fill is a BUY; take pairs spread evenly, so the wall shows a buy and its sell
+    buys = list(range(0, len(bars) - 1, 2))
+    take = buys if len(buys) <= want_pairs else [buys[round(k * (len(buys) - 1) / (want_pairs - 1))]
+                                                 for k in range(want_pairs)]
+    moments = []
+    for i in sorted(set(take)):
+        moments.append([at(bars[i]), "BUY"])
+        moments.append([at(bars[i + 1]), "SELL"])
+    return {"count": len(bars), "buys": (len(bars) + 1) // 2, "sells": len(bars) // 2,
+            "recovered_from": "the fee step between the with-fees and fee-free passes",
+            "clock": "interpolated across the run's span, rounded to the five-minute bar grid",
+            "clock_drift_minutes": round(drift, 1),   # worst disagreement with a logged reply time
+            "moments": moments}
 
 
 def finale_block(path: Path, rehearsal: bool = False) -> dict | None:
@@ -197,6 +283,9 @@ def finale_block(path: Path, rehearsal: bool = False) -> dict | None:
                                     "curve": thin(row["equity"])}
             if "replies" in row:                       # what the model actually said
                 out["traders"][name]["replies"] = row["replies"]
+                traded = traded_moments(raw, name)      # and when it actually acted
+                if traded:
+                    out["traders"][name]["traded"] = traded
         passes[label] = out
     return {"run": raw["run"], "generation": raw["generation"], "rehearsal": raw.get("rehearsal", False),
             "data": raw["data"], "bars": raw["bars"], "first_time": raw["first_time"],
@@ -264,6 +353,9 @@ def main() -> None:
     brain = brain_block(args.run)
     if brain:
         payload["brain"] = brain
+    run_meta = run_block(args.run)
+    if run_meta:
+        payload["run"] = run_meta
     locked = locked_block()
     if locked:
         payload["locked"] = locked
@@ -277,7 +369,7 @@ def main() -> None:
     last = frames[-1]
     print(f"{args.out} : {len(frames)} generations, {len(payload['windows'])} fixed days, "
           f"{payload['population']} flies a tribe, {args.out.stat().st_size / 1024:.0f} KB")
-    extras = [k for k in ("validation_windows", "locked", "finale") if k in payload]
+    extras = [k for k in ("validation_windows", "brain", "run", "locked", "finale") if k in payload]
     if extras:
         print(f"with {', '.join(extras)}" + (f" (finale from {payload['finale']['run']}, "
               f"{payload['finale']['source']})" if "finale" in payload else ""))

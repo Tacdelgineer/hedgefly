@@ -1,4 +1,4 @@
-# Visuals data contract — version 2
+# Visuals data contract — version 3
 
 One file, `visuals/hq/runs.json`, is everything the visuals know. They replay it; they never
 run the simulation and never read `runs/*/gen_*.json` directly (PLAN.md rule 7). Every number
@@ -89,6 +89,49 @@ entry price the run logged, so a data file whose rows have moved cannot chart th
 - `trades` are fills per fixed day, averaged over the four days for a fly.
 - `heroes.<name>` is the fittest fly of the generation. `ancestors` runs from the founder to its
   parent, oldest first; it is empty for a founder or a newcomer, and never contains `id`.
+
+## Version 3 additions
+
+All optional: a page must render against a file that has none of them.
+
+| key | meaning |
+|---|---|
+| `brain` | the run's `run_summary.json` brain block: `neurons`, `edges`, `photoreceptors`, `readout_groups`, `shared_eye_from`, `steps_per_candle`. The Brain Room's and Eye Room's walls |
+| `run` | `genome_size`, `minutes_per_generation`, `minutes_total`, from the same summary. The Switchboard's dial count and the Server Room's clock |
+| `locked` | the locked test set as `data/split.json` records it: `rows`, `first`, `last`, `source`. The vault's wall before a finale exists. Read from split.json and never from the parquet, which only the finale scripts may open (rule 3) |
+| `finale` | every trader's final equity and thinned curve, per pass; `llm.replies`; `llm.traded` |
+
+### finale.passes.<pass>.traders.llm.traded
+
+When the model was actually in the market. The finale logs how many times it traded and what it
+said in its last 24 calls, but **not a trade log**, so nothing in it says when it bought. Two
+logged curves together do: the fee-free pass replays the with-fees pass decision for decision,
+so the ratio between the two equity curves is flat except at a fill, where the fee knocks the
+with-fees wallet down by exactly one `fee_bps`. Every step in that ratio is one fill, and
+nothing else can produce one.
+
+```json
+{"count": 292, "buys": 146, "sells": 146,
+ "recovered_from": "the fee step between the with-fees and fee-free passes",
+ "clock": "interpolated across the run's span, rounded to the five-minute bar grid",
+ "clock_drift_minutes": 5.0,
+ "moments": [["2026-03-18T18:15:00+00:00", "BUY"], ["2026-03-18T19:15:00+00:00", "SELL"]]}
+```
+
+Two things the exporter checks before writing any of it, and refuses on:
+
+- **`count` must equal the trades the run logged.** It does: 292, and the final fee ratio equals
+  `(1 - 5bps)^292`. The 146 BUY fills also equal the 146 BUY replies the run logged, which is
+  what confirms fills alternate from flat.
+- **The clock must be close enough to be worth printing.** The finale carries no per-bar
+  timestamp, and the candles that do are the locked set, so bar-to-clock is interpolated across
+  `first_time..last_time`. That interpolation is then measured against the real timestamps the
+  run *did* log, on its last replies: `clock_drift_minutes` is the worst disagreement, 5.0 min,
+  which is one bar against a 60-minute decision grid. Beyond half a decision apart the exporter
+  refuses to export times at all.
+
+`moments` is a sample - buy/sell pairs spread evenly across the run, not all 292 - because it
+feeds a wall that cycles them. `count`, `buys` and `sells` are the whole run.
 
 ### What is deliberately not here
 
