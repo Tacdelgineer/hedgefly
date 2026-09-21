@@ -252,7 +252,8 @@ room({id:'brain',col:1,row:0,w:7,d:7,h:3.4,
     textCentred(pen,'REAL',p(1.7,5.55,.02),17,{ink:'cyan',w:1.4});
     textCentred(pen,'SHUFFLED',p(5.1,2.55,.02),14,{ink:'magenta',w:1.3});
     pen.shape(pen.wallQuad('j',3.2,1.5,3.3,1.55,.05),['slate',.1],{w:1.1});
-    text(pen,'166,700',pen.wallQuad('j',6.35,2.92,.01,.01,.11)[0],15,{wall:'j',tone:.85,w:1.3});
+    const br=RUN&&RUN.brain;                        // neuron count from the run's run_summary.json
+    text(pen,br?br.neurons.toLocaleString('en-US'):'\u2014',pen.wallQuad('j',6.35,2.92,.01,.01,.11)[0],15,{wall:'j',tone:.85,w:1.3});
     text(pen,'NEURONS EACH',pen.wallQuad('j',6.35,2.38,.01,.01,.11)[0],11,{wall:'j',tone:.6});
     text(pen,'ONE EYE, SHARED',pen.wallQuad('j',6.35,1.95,.01,.01,.11)[0],11,{wall:'j',tone:.75});
     pen.box(.4,1.2,0,.7,2.2,.45,{ink:'slate',tone:.3});
@@ -294,7 +295,10 @@ room({id:'vault',col:3,row:0,w:7,d:7,h:3.2,
     pen.halo(cx+dx,cy,14,'amber',.8);pen.shape(ellipse2(cx+dx,cy,8*sq,8,0,14),['amber',.9],{line:'amber'});
     textCentred(pen,open>.5?'OPEN':'LOCKED',[cx,cy+54],22,{ink:'amber',w:1.8});
     textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'amber',tone:.95,w:1.3});
-    textCentred(pen,'52,915 BARS',[cx,cy-66],11,{ink:'amber',tone:.7,w:1.1});
+    const lk=RUN&&RUN.locked;                       // sealed size before the finale, traded count after
+    const barsLine=fin?fin.bars.toLocaleString('en-US')+' BARS TRADED'
+                 :lk?lk.rows.toLocaleString('en-US')+' BARS SEALED':'SEALED';
+    textCentred(pen,barsLine,[cx,cy-66],11,{ink:'amber',tone:.7,w:1.1});
     for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'amber',3,{tone:.45,amp:.2});
     pen.line([p(1.3,3.8,.02),p(5.7,3.8,.02)],'ghost',2.2,{tone:.5,amp:.8});
     for(let k=0;k<9;k++)pen.dot(...p(1.4+k*.52,3.8,.05),2,'ghost',.6);

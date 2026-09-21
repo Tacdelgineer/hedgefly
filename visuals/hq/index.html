@@ -735,7 +735,8 @@ room({id:'vault',col:2,row:1,w:7,d:7,h:3.2,
     pen.shape(pen.circle(cx,cy,8,14),['coral',.8],{w:1.2});
     textCentred(pen,'LOCKED',[cx,cy+54],22,{ink:'coral',tone:.95,w:1.8});
     textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'paper',tone:.95,w:1.3});
-    textCentred(pen,'52,915 BARS',[cx,cy-66],11,{ink:'paper',tone:.75,w:1.1});
+    const lk=RUN&&RUN.locked;
+    textCentred(pen,lk?lk.rows.toLocaleString('en-US')+' BARS':'SEALED',[cx,cy-66],11,{ink:'paper',tone:.75,w:1.1});
 
     // hazard stripes on the floor, a chain, and a guard who is also a fly
     for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'coral',3,{tone:.55,amp:.2});

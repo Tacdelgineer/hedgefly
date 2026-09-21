@@ -149,6 +149,28 @@ def thin(curve: list[float], points: int = FINALE_POINTS) -> list[float]:
     return [round(float(v), 2) for v in out]
 
 
+def brain_block(run_dir: Path) -> dict | None:
+    """The brain's shape, from the run's own run_summary.json, for the Brain Room's wall."""
+    path = run_dir / "run_summary.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text()).get("brain")
+
+
+def locked_block() -> dict | None:
+    """What the vault holds, from `data/split.json`.
+
+    The vault's wall needs the size of the locked test set before any finale exists. split.json
+    carries both ranges and bar counts precisely so it can be read without opening the locked
+    file (PLAN.md SETUP), so this stays clear of rule 3: no one here touches the parquet."""
+    path = REPO / "data" / "split.json"
+    if not path.exists():
+        return None
+    locked = json.loads(path.read_text())["locked"]
+    return {"rows": locked["rows"], "first": locked["first"], "last": locked["last"],
+            "source": "data/split.json"}
+
+
 def finale_block(path: Path, rehearsal: bool = False) -> dict | None:
     """The finale as the visuals need it: every trader's final equity and its equity curve,
     thinned, in each pass. Reads the merged finale.json, or the flies' half alone if the merge
@@ -239,6 +261,12 @@ def main() -> None:
     if manifest.get("validation_windows"):
         payload["validation_windows"] = [window_of(day, evolve) for day in manifest["validation_windows"]]
         payload["validation_competitor_results"] = manifest.get("validation_competitors", {})
+    brain = brain_block(args.run)
+    if brain:
+        payload["brain"] = brain
+    locked = locked_block()
+    if locked:
+        payload["locked"] = locked
     finale = finale_block(args.finale or args.run, args.finale_rehearsal)
     if finale:
         payload["finale"] = finale
@@ -249,7 +277,7 @@ def main() -> None:
     last = frames[-1]
     print(f"{args.out} : {len(frames)} generations, {len(payload['windows'])} fixed days, "
           f"{payload['population']} flies a tribe, {args.out.stat().st_size / 1024:.0f} KB")
-    extras = [k for k in ("validation_windows", "finale") if k in payload]
+    extras = [k for k in ("validation_windows", "locked", "finale") if k in payload]
     if extras:
         print(f"with {', '.join(extras)}" + (f" (finale from {payload['finale']['run']}, "
               f"{payload['finale']['source']})" if "finale" in payload else ""))

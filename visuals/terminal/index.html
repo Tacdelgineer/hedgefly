@@ -358,7 +358,7 @@ function drawHero(r,f,time,scale){
 
 /* ---------- panels ---------- */
 function drawScore(r,f){
-  pane(r,'scoreboard · 4 fixed days');
+  pane(r,`scoreboard · ${days().length} fixed days`);
   const rows=[];
   for(const tribe of RUN.tribes){
     const d=f.tribes[tribe];
@@ -418,7 +418,10 @@ function drawLocked(r,time){
   ctx.save(); ctx.globalAlpha=pulse;
   label('last 6 months', r.x+10, r.y+r.h-30, {color:C.locked, size:11});
   ctx.restore();
-  label('52,915 bars  ·  sealed', r.x+10, r.y+r.h-14, {color:C.dim, size:9});
+  const lk=RUN&&RUN.locked, fin=RUN&&RUN.finale;
+  const barsLine=fin?fin.bars.toLocaleString('en-US')+' bars  ·  traded'
+               :lk?lk.rows.toLocaleString('en-US')+' bars  ·  sealed':'sealed';
+  label(barsLine, r.x+10, r.y+r.h-14, {color:C.dim, size:9});
 }
 
 function drawHead(r,f){
