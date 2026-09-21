@@ -1,9 +1,13 @@
-/* Shared by the headless tools: find a Chrome, and turn a served page into one self-contained file.
+/* Shared by the headless tools: find a Chrome, find an ffmpeg, and turn a served page into one
+ * self-contained file.
  *
- * A page under visuals/ loads ../lib/neon-riso.js and fetches ../hq/runs.json. inlinePage() puts
- * both inside the page, so it can be opened from a temporary file with no server - which is what an
- * unattended job wants. Every "<" inside inlined data is written as < so nothing inlined can
- * close a script block early. */
+ * A neon-riso page loads the core through an HTML comment marker and fetches its contract file
+ * over http. inlinePage() puts both inside the page, so it can be opened from a temporary
+ * file:// URL with no server at all - which is what a recorder and an unattended job want.
+ * Every "<" inside inlined data is escaped, so nothing inlined can close a script block early.
+ *
+ * Project-agnostic: paths are resolved against the repository root (the parent of scripts/),
+ * and the core is found by reading the page's own <script src> inside the marker. */
 import { spawn, execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
@@ -11,16 +15,29 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 export const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const LIB = /<!--NEON-RISO-->[\s\S]*?<!--\/NEON-RISO-->/;
+const LIB = /<!--NEON-RISO-->([\s\S]*?)<!--\/NEON-RISO-->/;
 
-export function inlinePage(pagePath, dataPath = 'visuals/hq/runs.json', extra = '') {
-  let page = readFileSync(resolve(repo, pagePath), 'utf8');
-  const lib = readFileSync(resolve(repo, 'visuals/lib/neon-riso.js'), 'utf8');
-  const run = JSON.parse(readFileSync(resolve(repo, dataPath), 'utf8'));
-  if (!LIB.test(page)) throw new Error(`${pagePath} has no <!--NEON-RISO--> block to inline`);
+/* The core the page asks for, resolved relative to the page itself, so any layout works. */
+function coreFor(pagePath, marker) {
+  const src = /src\s*=\s*["']([^"']+)["']/.exec(marker);
+  if (!src) throw new Error(`the NEON-RISO block in ${pagePath} has no <script src>`);
+  return resolve(dirname(resolve(repo, pagePath)), src[1]);
+}
+
+export function inlinePage(pagePath, dataPath, extra = '') {
+  const page = readFileSync(resolve(repo, pagePath), 'utf8');
+  const m = LIB.exec(page);
+  if (!m) throw new Error(`${pagePath} has no <!--NEON-RISO--> block to inline`);
+  const lib = readFileSync(coreFor(pagePath, m[1]), 'utf8');
   if (/<\/script/i.test(lib)) throw new Error('the neon riso core contains a closing script tag');
-  const data = JSON.stringify(run).replace(/</g, '\\u003c');
-  return { run, html: page.replace(LIB, () => `<script>window.__HEDGEFLY_RUN__=${data};${extra}</script>\n<script>\n${lib}\n</script>`) };
+
+  let head = extra;
+  let run = null;
+  if (dataPath) {
+    run = JSON.parse(readFileSync(resolve(repo, dataPath), 'utf8'));
+    head = `window.__HEDGEFLY_RUN__=${JSON.stringify(run).replace(/</g, '\\u003c')};${extra}`;
+  }
+  return { run, html: page.replace(LIB, () => `<script>${head}</script>\n<script>\n${lib}\n</script>`) };
 }
 
 /* A headless Chrome: $HEDGEFLY_CHROME, else the newest Playwright headless shell, else PATH. */
@@ -40,7 +57,10 @@ export function findChrome() {
 /* An ffmpeg that can write H.264, else Playwright's VP8-only build, else nothing. */
 export function findFfmpeg() {
   if (process.env.HEDGEFLY_FFMPEG) return { bin: process.env.HEDGEFLY_FFMPEG, h264: true };
-  try { if (execFileSync('ffmpeg', ['-hide_banner', '-encoders']).toString().includes('libx264')) return { bin: 'ffmpeg', h264: true }; } catch { /* none */ }
+  try {
+    if (execFileSync('ffmpeg', ['-hide_banner', '-encoders']).toString().includes('libx264'))
+      return { bin: 'ffmpeg', h264: true };
+  } catch { /* none on PATH */ }
   const cache = join(homedir(), '.cache', 'ms-playwright');
   if (existsSync(cache)) for (const d of readdirSync(cache).filter(d => d.startsWith('ffmpeg-')).sort().reverse()) {
     const bin = join(cache, d, 'ffmpeg-linux');
@@ -49,7 +69,7 @@ export function findFfmpeg() {
   return null;
 }
 
-/* ---- a minimal DevTools client: headless Chrome over Node's own WebSocket ------------- */
+/* ---- a minimal DevTools client: headless Chrome over Node's own WebSocket, no packages ---- */
 export async function launch(w, h) {
   const chrome = spawn(findChrome(), ['--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
     '--allow-file-access-from-files', '--remote-debugging-port=0', `--window-size=${w},${h}`, 'about:blank'],
@@ -63,12 +83,15 @@ export async function launch(w, h) {
   const ws = new WebSocket(wsUrl);
   await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = fail; });
   let id = 0; const pending = new Map(), listeners = [];
-  ws.onmessage = e => { const m = JSON.parse(e.data);
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
     if (m.id && pending.has(m.id)) { const { ok, fail } = pending.get(m.id); pending.delete(m.id); m.error ? fail(new Error(JSON.stringify(m.error))) : ok(m.result); }
-    else if (m.method) for (const l of listeners) l(m); };
+    else if (m.method) for (const l of listeners) l(m);
+  };
   const send = (method, params = {}, sessionId) => new Promise((ok, fail) => {
     const msg = { id: ++id, method, params }; if (sessionId) msg.sessionId = sessionId;
-    pending.set(msg.id, { ok, fail }); ws.send(JSON.stringify(msg)); });
+    pending.set(msg.id, { ok, fail }); ws.send(JSON.stringify(msg));
+  });
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
   const page = (m, p) => send(m, p, sessionId);
