@@ -742,17 +742,22 @@ room({id:'switchboard',col:3,row:2,w:9,d:7,h:3.2,
     /* The panel stands for the genome: rows x cols = the dial count the run logged, drawn at a
        readable density. Which dials flicker is this room's own seeded scatter, redrawn each
        generation - it shows THAT a child differs in a few places, never by how much. */
-    const cols=44,rows=size?Math.max(1,Math.round(size/cols)):24;
+    /* The panel is laid out to fit the wall it is on, not to a guessed pitch: the 'j' wall runs
+       the room's depth, so the columns divide that span and the rows divide the wall's height. */
+    const U0=.45,U1=6.55,Z0=.55,Z1=2.42,cols=38;
+    const rows=size?Math.max(1,Math.ceil(size/cols)):26;
+    const du=(U1-U0)/cols,dz=(Z1-Z0)/rows;
     const S=stream('switchboard',GEN);
     const changed=new Set();
     for(let k=0;k<26;k++)changed.add(randi(S,0,cols*rows-1));
     for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
       const idx=r*cols+c;if(size&&idx>=size)continue;
-      const i=.6+c*.175, z=2.6-r*.082;
+      const i=U0+c*du, z=Z1-r*dz;
       const hot=changed.has(idx);
       const fl=hot?(.35+.65*Math.abs(Math.sin(t*5+idx))):0;
-      pen.tint(pen.wallQuad('j',i,z,.11,.05,.05),hot?'gold':'slate',hot?.35+fl*.6:.20);
+      pen.tint(pen.wallQuad('j',i,z,du*.72,dz*.64,.05),hot?'gold':'slate',hot?.55+fl*.45:.24);
     }
+    pen.shape(pen.wallQuad('j',U0-.1,Z0-.08,U1-U0+.2,Z1-Z0+dz+.16,.045),null,{w:1,line:'ghost',lineTone:.3});
     text(pen,'26 DIALS MOVED IN THIS GENERATION’S CHILDREN',pen.wallQuad('j',7.9,.62,.01,.01,.05)[0],6,{wall:'j',ink:'gold',tone:.7});
     text(pen,f.tribes.real.born.child+' CHILDREN, '+f.tribes.real.born.newcomer+' STRANGERS, EACH TRIBE',
          pen.wallQuad('j',7.9,.4,.01,.01,.05)[0],5.8,{wall:'j',tone:.5});

@@ -119,7 +119,8 @@ async function plan(b) {
   for (const id of ['street', 'server', 'eye', 'switchboard', 'toll', 'boardroom', 'corridor', 'gallery'])
     frame[id] = await b.evaluate(`__hedgefly.frame('${id}')`);
   spot.eye = await b.evaluate("__hedgefly.spot('eye',3.9,3.1,1.9)");
-  spot.switchboard = await b.evaluate("__hedgefly.spot('switchboard',4,0.2,1.6)");
+  // the dial panel is on the 'j' wall, which stands at i ~ 0: aim across it, not at the floor
+  spot.switchboard = await b.evaluate("__hedgefly.spot('switchboard',0.2,3.4,1.5)");
   spot.boardroom = await b.evaluate("__hedgefly.spot('boardroom',4.5,3.6,0.8)");
   spot.corridor_a = await b.evaluate("__hedgefly.spot('corridor',1.6,2.5,1)");
   spot.corridor_b = await b.evaluate("__hedgefly.spot('corridor',10.6,2.5,1)");
