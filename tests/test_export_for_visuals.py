@@ -9,7 +9,9 @@ import json
 import pandas as pd
 import pytest
 
-from scripts.export_for_visuals import candles_for, check, frame_of, generations, seats
+import scripts.export_for_visuals as exporter
+from scripts.export_for_visuals import (brain_block, candles_for, check, frame_of, generations,
+                                          locked_block, seats)
 
 POPULATION = 6
 
@@ -28,10 +30,25 @@ def summary(generation=0, eliminated=4):
             "tribes": {"real": tribe, "scrambled": json.loads(json.dumps(tribe))}}
 
 
-def log(eliminated=4):
-    flies = [{"id": f"real-f{i:05d}", "final_equity": 900.0 + i, "eliminated": i < eliminated,
-              "trades_per_day": i / 2} for i in range(POPULATION)]
-    return {"tribes": {"real": {"flies": flies}, "scrambled": {"flies": list(flies)}}}
+def log(eliminated=4, generation=0, survivors=0):
+    """POPULATION flies as a generation's own log holds them.
+
+    Every fly records the generation it was `born` in and its `origin` at birth, which is what
+    the Nursery counts. At generation 0 the whole population are founders. Later, the first
+    `survivors` flies were born a generation earlier and carry the origin they were born with;
+    the rest were born into this generation, the last of them a random newcomer."""
+    flies = []
+    for i in range(POPULATION):
+        if generation == 0:
+            born, origin = 0, "founder"
+        elif i < survivors:
+            born, origin = generation - 1, "child"
+        else:
+            born, origin = generation, "newcomer" if i == POPULATION - 1 else "child"
+        flies.append({"id": f"real-f{i:05d}", "final_equity": 900.0 + i, "eliminated": i < eliminated,
+                      "trades_per_day": i / 2, "born": born, "origin": origin})
+    return {"tribes": {"real": {"flies": flies},
+                       "scrambled": {"flies": json.loads(json.dumps(flies))}}}
 
 
 def payload(**changes):
@@ -69,6 +86,21 @@ def test_a_hero_cannot_be_its_own_ancestor():
     f["heroes"]["real"]["ancestors"] = ["real-f00001"]
     with pytest.raises(SystemExit, match="own ancestor"):
         check({"population": POPULATION, "windows": [], "frames": [f]})
+
+
+def test_at_generation_zero_the_whole_population_are_founders():
+    f = frame_of(summary(), log())
+    assert f["tribes"]["real"]["born"] == {"founder": POPULATION, "child": 0, "newcomer": 0,
+                                           "survivor": 0}
+
+
+def test_the_nursery_counts_who_was_born_this_generation():
+    """A fly born in an earlier generation is a survivor whatever it was born as, so the four
+    counts are a partition of the population and the Nursery's arithmetic always closes."""
+    f = frame_of(summary(generation=3), log(generation=3, survivors=2))
+    born = f["tribes"]["real"]["born"]
+    assert born == {"founder": 0, "child": 3, "newcomer": 1, "survivor": 2}
+    assert sum(born.values()) == POPULATION
 
 
 def test_a_run_with_no_finished_generations_is_refused(tmp_path):
@@ -114,3 +146,31 @@ def test_a_data_file_whose_rows_have_moved_is_refused():
 def test_a_candle_that_does_not_contain_its_own_body_is_caught():
     with pytest.raises(SystemExit, match="do not contain"):
         check(payload(windows=[{"candles": [[100.0, 99.0, 98.0, 100.5]]}]))    # high below the close
+
+
+def test_the_brain_room_reads_its_figures_from_the_run(tmp_path):
+    (tmp_path / "run_summary.json").write_text(json.dumps({"brain": {"neurons": 166700,
+                                                                     "readout_groups": 498}}))
+    assert brain_block(tmp_path)["neurons"] == 166700
+    assert brain_block(tmp_path / "nowhere") is None
+
+
+def test_the_vault_reads_the_locked_set_from_the_split_and_never_from_the_parquet(tmp_path,
+                                                                                 monkeypatch):
+    """PLAN.md rule 3: the locked candles are for the two finale scripts alone. split.json holds
+    the counts precisely so the vault's wall can be filled without opening the parquet."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "split.json").write_text(json.dumps(
+        {"locked": {"file": "the-candles.parquet", "rows": 52915,
+                    "first": "2026-03-17T22:00:00+00:00", "last": "2026-09-17T22:00:00+00:00"}}))
+    monkeypatch.setattr(exporter, "REPO", tmp_path)
+
+    # split.json is the only file in data/, so a block at all proves nothing else was opened
+    block = locked_block()
+    assert block["rows"] == 52915 and block["source"] == "data/split.json"
+    assert "file" not in block                 # the candles are not even named on the vault wall
+
+
+def test_a_project_without_a_split_file_simply_has_no_vault_figures(tmp_path, monkeypatch):
+    monkeypatch.setattr(exporter, "REPO", tmp_path)
+    assert locked_block() is None
