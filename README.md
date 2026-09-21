@@ -88,6 +88,9 @@ Published from `gh-pages`: <https://tacdelgineer.github.io/hedgefly/>
   panel; the full key list is in the legend and in that panel.
 - Film: `node scripts/record_hq.mjs`, `record_extra.mjs`, `record_rooms.mjs` and
   `record_new.mjs` write PNG frames plus mp4, wide and vertical, into `results/film*`.
+  `results/final_footage/{wide,vertical}` collects all 40 of those mp4s under names that put
+  them in script order; `ORDER.txt` there says which reel each one came from. Both cuts run
+  7:10.8. Untracked, like the reels it is copied from.
 - Checks: `node scripts/smoke_rooms.mjs` draws every room and view once and fails on anything
   that throws; `node scripts/test_director.mjs` presses every director key in the built file.
 
