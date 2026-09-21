@@ -864,9 +864,11 @@ room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
       text(pen,s,pen.wallQuad('i',.8,2.82-k*.3,.01,.01,.1)[0],k===5?7.5:5.8,{wall:'i',tone:k===0?.5:k===5?1:.75,w:.75}));
     const reply=pen.wallQuad('j',.8,.9,4.9,2.1,.05);pen.shape(reply,['slate',.1],{w:1.1});
     const R0=5.55;                                     // 'j' wall text reads up-right: anchor at the high-j edge
-    if(llm&&llm.replies){const r=llm.replies,last=r.last[r.last.length-1];
-      text(pen,'ITS LAST REPLY',pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
+    if(llm&&llm.replies){const r=llm.replies,k=REPLY<0?r.last.length-1:REPLY%r.last.length,last=r.last[k];
+      text(pen,REPLY<0?'ITS LAST REPLY':'REPLY '+(k+1)+' OF '+r.last.length,pen.wallQuad('j',R0,2.8,.01,.01,.1)[0],7,{wall:'j',tone:.55});
       text(pen,last[1],pen.wallQuad('j',R0,2.5,.01,.01,.1)[0],30,{wall:'j',w:2.4});
+      // the hour it was asked, so a held position still reads as time passing
+      text(pen,String(last[0]).replace('T',' ').replace('+00:00',' UTC').slice(0,19),pen.wallQuad('j',R0,1.85,.01,.01,.1)[0],7,{wall:'j',tone:.6});
       text(pen,'BUY '+r.counts.BUY+'  SELL '+r.counts.SELL+'  HOLD '+r.counts.HOLD+' OF '+r.asked.toLocaleString('en-US'),pen.wallQuad('j',R0,1.5,.01,.01,.1)[0],7,{wall:'j',tone:.75});
       // say what the number covers, from the data: a rehearsal is a day or two, not the vault
       text(pen,money(llm.final_equity)+(fin.rehearsal?' IN THE REHEARSAL':' OVER THE LOCKED MONTHS'),pen.wallQuad('j',R0,1.2,.01,.01,.1)[0],8,{wall:'j',w:1})}
@@ -970,6 +972,7 @@ const NAMES={lab:'lab',brain:'brain',floor:'floor',pile:'pile',nursery:'nursery'
              archive:'archive',overfit:'overfit',model:'model',vault:'vault'};
 const DRIVEN=()=>!!window.__HEDGEFLY_VCLOCK_DRIVEN__;
 let CAM_MODE='tour',genStart=0,shotStart=0,shotIndex=-1,heroStart=0,HERO_POS=null,heroTrail=[];
+let REPLY=-1;                                    // which of the model's logged replies is on the wall; -1 = its last
 const ui={play:document.getElementById('play'),scrub:document.getElementById('scrub'),label:document.getElementById('label'),
           stat:document.getElementById('stat'),rooms:document.getElementById('rooms'),terminal:document.getElementById('terminal'),
           inset:document.getElementById('inset'),building:document.getElementById('building'),herocam:document.getElementById('herocam')};
@@ -1053,6 +1056,13 @@ window.__hedgefly={ready:false,
     else if(kind==='focus')goShot(SHOTS.findIndex(s=>s.room===arg&&s.focus),ms);
     else if(kind==='building')building(ms);else if(kind==='hero')heroCam()},
   play(on){PLAYING=on;genStart=NOW()},gen(g){setGeneration(g)},sel(s){SEL=s},open(o){OPEN=o},
+  reply(i){REPLY=i},
+  // a shot that moves by itself: the recorder sets the camera every frame instead of tweening to it
+  cam(x,y,zoom){CAM_MODE='free';tween=null;camBase={x,y,zoom:clamp(zoom,MIN_Z,MAX_Z)};
+    cam.x=camBase.x;cam.y=camBase.y;cam.zoom=camBase.zoom;lastCam=''},
+  frame(id){const r=roomById(id);return r?framing(r.bounds):null},
+  spot(id,i,j,z=0){const r=roomById(id);if(!r)return null;const [x,y]=iso(r.oi+i,r.oj+j,z);return {x,y}},
+  replies(){const f=RUN&&RUN.finale,l=f&&f.passes.with_fees.traders.llm;return l&&l.replies?l.replies.last.length:0},
   rooms:()=>ROOM_ORDER.slice(),hasFinale:()=>!!(RUN&&RUN.finale),generations:()=>RUN?RUN.generations:0};
 async function boot(){
   if(qs.has('vertical'))document.body.classList.add('vertical');
