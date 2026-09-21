@@ -102,6 +102,48 @@ try {
   const c1 = await cam();
   check('. moves to the next room', c0.x !== c1.x || c0.y !== c1.y, `${JSON.stringify(c0)} vs ${JSON.stringify(c1)}`);
 
+  // k / o switch the point of view, and pressing the same key again comes back
+  const view = () => b.evaluate('VIEW');
+  await key('k', 'KeyK', 75);
+  const v1 = await view();
+  await key('k', 'KeyK', 75);
+  const v2 = await view();
+  check('k opens the blueprint and closes it again', v1 === 'blueprint' && v2 === 'rooms', `${v1} -> ${v2}`);
+  await key('o', 'KeyO', 79);
+  const v3 = await view();
+  const moved = await b.evaluate('JSON.stringify(roomOffset(ROOMS[0]))');
+  await key('o', 'KeyO', 79);
+  const v4 = await view();
+  check('o opens the dollhouse and pulls the floors apart',
+        v3 === 'dollhouse' && v4 === 'rooms' && moved !== '[0,0]', `${v3} -> ${v4}, offset ${moved}`);
+
+  // n lifts the paper from night to day, and the lift follows the generation
+  await b.evaluate('__hedgefly.gen(0)');
+  await key('n', 'KeyN', 78);
+  const d0 = await b.evaluate('JSON.stringify([DAYLIGHT,+dayShare().toFixed(3)])');
+  await b.evaluate(`__hedgefly.gen(${await b.evaluate('RUN.generations-1')})`);
+  const dN = await b.evaluate('JSON.stringify([DAYLIGHT,+dayShare().toFixed(3)])');
+  await key('n', 'KeyN', 78);
+  const dOff = await b.evaluate('DAYLIGHT');
+  check('n ties the light to the generation', d0 === '[true,0]' && dN === '[true,1]' && dOff === false,
+        `${d0} .. ${dN}, off ${dOff}`);
+
+  // i opens the About panel, and it carries the credit and the run's own figures
+  await key('i', 'KeyI', 73);
+  const about = JSON.parse(await b.evaluate(`JSON.stringify((()=>{const el=document.getElementById('about');
+    return {open:el.classList.contains('open'),text:el.textContent,
+            run:document.getElementById('aboutrun').textContent,
+            keys:document.getElementById('aboutkeys').children.length}})())`));
+  check('i opens the about panel', about.open === true, about.open);
+  for (const who of ['Kevin Ngo', 'kevin_t_ngo', 'IshaanKalra2103', 'MaleCNS v1.0', 'Berg et al.', 'nfly'])
+    check(`about panel credits ${who}`, about.text.includes(who), 'missing');
+  check('about panel names the run it is replaying',
+        /Replaying run \S+: \d+ generations/.test(about.run), about.run);
+  check('about panel lists the director keys', about.keys >= 10, about.keys);
+  await key('Escape', 'Escape', 27);
+  check('escape closes the about panel',
+        (await b.evaluate(`document.getElementById('about').classList.contains('open')`)) === false, 'still open');
+
   // f asks for fullscreen (headless refuses it; what matters is that it is wired and does not throw)
   const errs = await b.evaluate('window.__err||0');
   await key('f', 'KeyF', 70);

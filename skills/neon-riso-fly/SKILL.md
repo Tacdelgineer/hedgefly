@@ -136,5 +136,8 @@ capture runs. Take the `?record` handling in `example/index.html` verbatim.
 
 ## Credit
 
-The isometric-diorama idea and the risograph treatment follow Kevin Ngo's "a small light, room
-by room" as *technique*, not as artwork to reproduce. Draw original rooms.
+Visual style inspired by Kevin Ngo's "a small light, room by room" and his "life of a fruit fly" animation (@kevin_t_ngo). Built with the riso-rooms and hand-drawn-canvas-animation skills by IshaanKalra2103 (MIT). Connectome: MaleCNS v1.0 (Berg et al., Cell 2026). Brain simulator: nfly (MIT).
+
+The isometric-diorama idea and the risograph treatment follow Kevin Ngo's work as *technique*,
+not as artwork to reproduce: draw original rooms. Anything built with this skill should carry
+the credit above where its readers can find it - a README, an About panel, or both.

@@ -37,6 +37,20 @@ traded. The same goes for the plates: a tribe is never printed at a higher tone 
 Anything that is neither a tribe, the hero, nor the vault is `slate` or `ghost`. A new colour
 needs a new meaning, written into this table first.
 
+**How good is tone, not hue.** The Barcode Wall paints one cell per fly per generation and has
+to show fitness, which is exactly the thing colour is not allowed to carry. It carries it in the
+*density of the ink* instead: a real fly's cell is cyan and a scrambled fly's is magenta,
+whatever either of them earned, and the halftone gets denser as fitness rises. Both tribes are
+scaled against one shared range taken over the whole run, so a dark band means the same thing in
+both blocks and the two still read as the same value in greyscale. Any future room that needs to
+show a quantity does it the same way: tone within the ink that says *who*, never a hue that says
+*how good*.
+
+**A point of view may not change a reading.** The blueprint plan, the dollhouse section and the
+night-to-day light move the camera, take the furniture away or wash the whole frame - and the
+wash is one flat pass over everything, identical for every ink, so a tribe can never come out of
+dawn brighter than the other. None of the three may touch a number, and none of them does.
+
 ## The four rules of the look
 
 1. **Every fill is a halftone of light.** Knock out to paper (black), then screen an ink on top

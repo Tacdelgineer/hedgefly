@@ -43,3 +43,4 @@ fi
 # The films last: they take a while, they are far too big for git (results/film is ignored), and
 # they must never turn a good refresh into a failed one.
 node scripts/record_hq.mjs --out results/film || echo "recording failed; the rest of the refresh stands"
+node scripts/record_new.mjs --out results/film3 || echo "the new rooms did not record; the rest of the refresh stands"

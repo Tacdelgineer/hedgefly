@@ -11,7 +11,8 @@ import pytest
 
 import scripts.export_for_visuals as exporter
 from scripts.export_for_visuals import (brain_block, candles_for, check, frame_of, generations,
-                                          locked_block, seats, traded_moments)
+                                          locked_block, seats, traded_moments,
+                                          champion_branch, lineage_of)
 
 POPULATION = 6
 
@@ -46,7 +47,8 @@ def log(eliminated=4, generation=0, survivors=0):
         else:
             born, origin = generation, "newcomer" if i == POPULATION - 1 else "child"
         flies.append({"id": f"real-f{i:05d}", "final_equity": 900.0 + i, "eliminated": i < eliminated,
-                      "trades_per_day": i / 2, "born": born, "origin": origin})
+                      "trades_per_day": i / 2, "born": born, "origin": origin,
+                      "parent": None if born == 0 else f"real-f{i:05d}", "fitness": (i - 3) / 1000})
     return {"tribes": {"real": {"flies": flies},
                        "scrambled": {"flies": json.loads(json.dumps(flies))}}}
 
@@ -117,8 +119,10 @@ def test_a_generation_without_its_full_log_is_skipped(tmp_path):
 
 def test_seats_are_rounded_to_cents():
     rows = seats({"tribes": {"real": {"flies": [{"final_equity": 1000.12345, "eliminated": False,
-                                                  "trades_per_day": 1.234}]}}}, "real")
-    assert rows == [{"equity": 1000.12, "eliminated": False, "trades_per_day": 1.23}]
+                                                  "trades_per_day": 1.234,
+                                                  "fitness": 0.01234567}]}}}, "real")
+    assert rows == [{"equity": 1000.12, "eliminated": False, "trades_per_day": 1.23,
+                     "fitness": 0.012346}]
 
 
 def evolve_bars(n=12):
@@ -229,3 +233,86 @@ def test_a_finale_with_no_fee_free_twin_recovers_nothing_rather_than_guessing():
     raw = a_finale(fills=(3, 7))
     del raw["passes"]["no_fees"]
     assert traded_moments(raw) is None
+
+
+# ---- v4: the family tree, the trade tape, the replay and the eye ---------------------------
+
+def tree_rows(generations=3, population=4):
+    """Raw fly records per generation, the shape `lineage_row` returns: the top two flies of each
+    generation survive into the next one, the third is a child of the best, the fourth a
+    newcomer with no parent anywhere."""
+    rows = []
+    for g in range(generations):
+        gen = []
+        for k in range(population):
+            if g and k < 2:                       # the survivors keep their id and their parent
+                gen.append(dict(rows[g - 1][k]))
+            elif g and k == 2:
+                gen.append({"id": f"f{g}{k}", "parent": rows[g - 1][0]["id"], "origin": "child",
+                            "born": g, "fitness": .01 * k, "eliminated": True})
+            else:
+                gen.append({"id": f"f{g}{k}", "parent": None,
+                            "origin": "founder" if g == 0 else "newcomer",
+                            "born": g, "fitness": .01 * k, "eliminated": k > 1})
+        rows.append(gen)
+    return rows
+
+
+def test_a_survivor_links_to_the_seat_it_held_last_generation():
+    tree = lineage_of(tree_rows())
+    assert [f["p"] for f in tree[0]] == [-1, -1, -1, -1]       # nothing precedes generation zero
+    assert tree[1][0] == {"p": 0, "o": "s", "f": 0.0, "e": 1} or tree[1][0]["o"] == "s"
+    assert tree[1][0]["p"] == 0 and tree[1][1]["p"] == 1
+
+
+def test_a_child_links_to_its_parent_and_a_newcomer_starts_its_own_branch():
+    tree = lineage_of(tree_rows())
+    assert tree[1][2]["p"] == 0 and tree[1][2]["o"] == "c"     # child of the seat-0 survivor
+    assert tree[1][3]["p"] == -1 and tree[1][3]["o"] == "n"
+
+
+def test_the_champion_branch_joins_up_all_the_way_back():
+    rows = tree_rows()
+    tree = lineage_of(rows)
+    champ = champion_branch(tree, rows)
+    assert champ["seats"][-1] == champ["seat"]
+    for g in range(1, len(champ["seats"])):
+        here, back = champ["seats"][g], champ["seats"][g - 1]
+        if here >= 0 and back >= 0:
+            assert tree[g][here]["p"] == back
+
+
+def test_a_branch_that_does_not_join_up_is_caught(monkeypatch):
+    payload = {"population": 2, "frames": [{"generation": 0, "tribes": {}}, {"generation": 1, "tribes": {}}],
+               "windows": [],
+               "lineage": {"real": {"flies": [[{"p": -1, "o": "f", "f": 0, "e": 0},
+                                               {"p": -1, "o": "f", "f": 0, "e": 0}],
+                                              [{"p": 0, "o": "s", "f": 0, "e": 0},
+                                               {"p": 0, "o": "c", "f": 1, "e": 0}]],
+                                    "champion": {"id": "x", "seat": 1, "seats": [1, 1]}}}}
+    with pytest.raises(SystemExit, match="champion branch skips"):
+        check(payload)
+
+
+def test_the_eye_refuses_a_binning_that_loses_photoreceptors():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "eye": {"photoreceptors": 10, "cells": 2, "layout": [[0, 0], [1, 1]],
+                       "per_cell": [3, 3], "frames": [{"bar": 0, "v": [0.1, 0.2]}]}}
+    with pytest.raises(SystemExit, match="photoreceptors binned"):
+        check(payload)
+
+
+def test_a_tape_out_of_time_order_is_caught():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "tape": {"fills": [{"t": "2022-01-02T00:00:00+00:00", "side": "buy", "price": 1.0},
+                                  {"t": "2022-01-01T00:00:00+00:00", "side": "sell", "price": 1.0}]}}
+    with pytest.raises(SystemExit, match="not in time order"):
+        check(payload)
+
+
+def test_a_replay_bar_naming_a_group_with_no_name_is_caught():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "replay": {"champions": {"real": {"agreement": 1.0, "groups": {"7": "type:DNp65"},
+                                                 "bars": [{"b": 0, "a": "buy", "g": [[9, .1, .2]]}]}}}}
+    with pytest.raises(SystemExit, match="has no name in the export"):
+        check(payload)

@@ -82,7 +82,12 @@ somewhere else, and the two tribes really are built with the same one.
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): <https://male-cns.janelia.org/>.
 - **nfly** by Zhengxu Yu, <https://github.com/zhengxuyu/nfly>, MIT License. Connectome loader and
   rate-based brain dynamics.
-- **creative-skills** by Ishaan Kalra, <https://github.com/IshaanKalra2103/creative-skills>,
+- **creative-skills** by IshaanKalra2103, <https://github.com/IshaanKalra2103/creative-skills>,
   MIT License. The `riso-rooms` and `hand-drawn-canvas-animation` skills used for the visuals.
-- The visual style is inspired by Kevin Ngo's "a small light, room by room". Inspiration only;
-  no artwork or scenes are copied.
+- The visual style is inspired by Kevin Ngo's "a small light, room by room" and his "life of a
+  fruit fly" animation ([@kevin_t_ngo](https://twitter.com/kevin_t_ngo)). Inspiration only; no
+  artwork, scenes or frames are copied, and every mark in this repo is drawn in code.
+
+The short form, as it appears in the world's About panel and in `skills/neon-riso-fly/SKILL.md`:
+
+> Visual style inspired by Kevin Ngo's "a small light, room by room" and his "life of a fruit fly" animation (@kevin_t_ngo). Built with the riso-rooms and hand-drawn-canvas-animation skills by IshaanKalra2103 (MIT). Connectome: MaleCNS v1.0 (Berg et al., Cell 2026). Brain simulator: nfly (MIT).

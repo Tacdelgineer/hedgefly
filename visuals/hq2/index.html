@@ -40,6 +40,19 @@
   #legend b{color:var(--gold);font-weight:400;white-space:nowrap}
   #legend span{opacity:.72}
   body.clean #legend,body.hidden-ui #legend{display:none!important}
+  /* the About panel: who this was built with, where a reader can find it */
+  #about{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:640px;width:calc(100% - 44px);
+      max-height:calc(100% - 120px);overflow:auto;display:none;padding:22px 26px 20px;
+      background:rgba(7,7,11,.97);border:1px solid rgba(91,108,255,.55);color:var(--ghost);
+      font:12.5px/1.65 var(--mono);letter-spacing:.02em;z-index:5}
+  #about.open{display:block}
+  #about h2{margin:0 0 4px;font:13px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:400}
+  #about p{margin:0 0 12px} #about a{color:var(--cyan)}
+  #about .close{position:absolute;right:12px;top:9px;cursor:pointer;opacity:.7;font-size:15px}
+  #about .close:hover{opacity:1}
+  #about dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:2px 14px}
+  #about dt{color:var(--slate);white-space:nowrap} #about dd{margin:0}
+  body.clean #about{display:none!important}
   body.vertical #legend{font-size:10px;top:10px;right:10px}
   body.vertical #inset{--s:calc((100vw - 28px) / 1280px);bottom:150px}
 </style>
@@ -47,6 +60,27 @@
 <canvas id="stage" aria-label="Natural Selection Capital HQ: a neon riso diorama of two tribes of fly brains trading Bitcoin"></canvas>
 <div id="inset"><span class="tag">fly terminal · inset</span><iframe title="fly terminal" loading="lazy"></iframe></div>
 <div id="legend" aria-hidden="true"></div>
+<div id="about" role="dialog" aria-label="about this world">
+  <span class="close" id="aboutclose" role="button" tabindex="0" aria-label="close">×</span>
+  <h2>Natural Selection Capital HQ</h2>
+  <p>One hundred frozen fruit-fly connectomes trade Bitcoin. The brains never change; only the
+     cables between the market and the brain evolve. A real-connectome tribe races a
+     degree-preserving scrambled one. Every room replays a log - no number on any wall is typed
+     into this page, and nothing here re-runs the simulation.</p>
+  <p id="aboutrun"></p>
+  <h2>Credits</h2>
+  <p>Visual style inspired by Kevin Ngo's &ldquo;a small light, room by room&rdquo; and his
+     &ldquo;life of a fruit fly&rdquo; animation
+     (<a href="https://twitter.com/kevin_t_ngo" target="_blank" rel="noopener">@kevin_t_ngo</a>).
+     Built with the riso-rooms and hand-drawn-canvas-animation skills by
+     <a href="https://github.com/IshaanKalra2103/creative-skills" target="_blank" rel="noopener">IshaanKalra2103</a>
+     (MIT). Connectome: MaleCNS v1.0 (Berg et al., Cell 2026). Brain simulator:
+     <a href="https://github.com/zhengxuyu/nfly" target="_blank" rel="noopener">nfly</a> (MIT).</p>
+  <p>Inspiration only: no artwork, scenes or frames are copied. Every mark on this canvas is
+     drawn in code, and the type is a stencil alphabet drawn stroke by stroke.</p>
+  <h2>Keys</h2>
+  <dl id="aboutkeys"></dl>
+</div>
 <div id="ui">
   <button id="play">pause</button>
   <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
@@ -55,6 +89,7 @@
   <button id="building" title="the whole building (b)">building</button>
   <button id="herocam" title="follow the hero fly on its rounds (y)">hero cam</button>
   <button id="terminal" title="the fly terminal, as an inset (t)">terminal</button>
+  <button id="aboutbtn" title="what this is, and who it was built with (i)">about</button>
   <div id="stat"></div>
 </div>
 <!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
@@ -106,14 +141,102 @@ function draw(frameNo){
   ctx.setTransform(dpr*z,0,0,dpr*z,dpr*(W/2-cam.x*z),dpr*(H/2-cam.y*z));
   const a=toWorld(0,0),b=toWorld(W,H);
   for(const r of ROOMS){
-    if(r.bounds[2]<a.x||r.bounds[0]>b.x||r.bounds[3]<a.y||r.bounds[1]>b.y)continue;
-    const pen=makePen(ctx,{ox:r.ox,oy:r.oy,boil});
-    try{if(r.shell!==false)pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id))}catch(e){console.error('room '+r.id,e)}
+    const [dx,dy]=roomOffset(r);
+    if(r.bounds[2]+dx<a.x||r.bounds[0]+dx>b.x||r.bounds[3]+dy<a.y||r.bounds[1]+dy>b.y)continue;
+    const pen=makePen(ctx,{ox:r.ox+dx,oy:r.oy+dy,boil});
+    try{
+      if(VIEW==='blueprint')plan(pen,r,t);
+      else{if(r.shell!==false)pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id));
+           if(VIEW==='dollhouse')section(pen,r)}
+    }catch(e){console.error('room '+r.id,e)}
     ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
   }
   try{if(typeof overlay==='function')overlay(makePen(ctx,{ox:0,oy:0,boil}),t,a,b)}catch(e){console.error('overlay',e)}
   ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
-  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
+  daylight(a,b);ctx.globalCompositeOperation='source-over';
+}
+
+/* =====================================================================
+   POINTS OF VIEW - three ways to look at the same building, none of which
+   changes a number on any wall. BLUEPRINT strips the rooms back to their plan;
+   DOLLHOUSE pulls the floors apart and shows the cut; DAYLIGHT lifts the paper
+   from night to day as the generations pass. All three are on the keyboard.
+   ===================================================================== */
+let VIEW='rooms';                 // 'rooms' | 'blueprint' | 'dollhouse'
+let DAYLIGHT=false;               // the night-to-day wash, tied to the generation
+const DOLL=[132,150];             // how far apart a dollhouse pulls the columns and the rows
+function roomOffset(r){return VIEW==='dollhouse'?[(r.col-1.5)*DOLL[0],-(r.row-1.5)*DOLL[1]]:[0,0]}
+function roomBounds(r){const [dx,dy]=roomOffset(r);
+  return [r.bounds[0]+dx,r.bounds[1]+dy,r.bounds[2]+dx,r.bounds[3]+dy]}
+
+/* The blueprint: every room as the plan it was laid out from - the floor it occupies, its grid,
+   its name and its size in tiles. No furniture and no readings, because a plan is the drawing's
+   own geometry and not a claim about the run; the title block carries the run's figures. */
+function plan(pen,r,t){
+  const p=pen.p,F=pen.floorQuad(0,0,r.w,r.d,0);
+  pen.knock(F,.55);
+  pen.line(F,'slate',1.5,{closed:true,amp:.3,tone:.75});
+  for(let i=1;i<r.w;i++)pen.line([p(i,0,0),p(i,r.d,0)],'slate',.45,{tone:.28,amp:.15});
+  for(let j=1;j<r.d;j++)pen.line([p(0,j,0),p(r.w,j,0)],'slate',.45,{tone:.28,amp:.15});
+  // the walls the cutaway keeps, marked as a plan marks them: two heavy lines
+  pen.line([p(0,r.d,0),p(0,0,0),p(r.w,0,0)],'ghost',2.2,{tone:.55,amp:.25});
+  const c=p(r.w/2,r.d/2,0),SZ=(r.bounds[2]-r.bounds[0])*.052;
+  textCentred(pen,(NAMES[r.id]||r.id).toUpperCase(),[c[0],c[1]-SZ*.7],SZ,{ink:'ghost',tone:.85,w:SZ*.11});
+  textCentred(pen,r.w+' × '+r.d,[c[0],c[1]+SZ*.85],SZ*.55,{ink:'slate',tone:.6,w:SZ*.07});
+  // the dimension line along the front edge
+  const A=p(0,r.d+.55,0),B=p(r.w,r.d+.55,0);
+  pen.line([A,B],'slate',.7,{tone:.5,amp:.1});
+  pen.line([[A[0],A[1]-4],[A[0],A[1]+4]],'slate',.7,{tone:.5,amp:0});
+  pen.line([[B[0],B[1]-4],[B[0],B[1]+4]],'slate',.7,{tone:.5,amp:0});
+}
+
+/* The dollhouse: the floors pulled apart, and the cut the cutaway makes shown as a cut - a
+   heavy edge along the two open faces, hatched the way a section is hatched. */
+function section(pen,r){
+  const p=pen.p,T=.25;
+  if(r.shell===false)return;
+  const faces=[[p(-T,r.d,0),p(r.w,r.d,0),p(r.w,r.d,-.5),p(-T,r.d,-.5)],
+               [p(r.w,-T,0),p(r.w,r.d,0),p(r.w,r.d,-.5),p(r.w,-T,-.5)]];
+  for(const f of faces){
+    pen.line(f,'ghost',1.9,{closed:true,tone:.6,amp:.25});
+    for(let u=.08;u<.95;u+=.1){       // hatching across the cut face
+      const a=[lerp(f[0][0],f[1][0],u),lerp(f[0][1],f[1][1],u)];
+      const b=[lerp(f[3][0],f[2][0],u),lerp(f[3][1],f[2][1],u)];
+      pen.line([a,b],'slate',.55,{tone:.45,amp:.1});
+    }
+  }
+  pen.line([p(-T,r.d,-.5),p(r.w,r.d,-.5)],'ghost',1.2,{tone:.35,amp:.2});
+}
+
+/* A blueprint's title block: what is being drawn, and the run it was drawn from. Every figure
+   in it comes out of runs.json, the same as any wall in any room (PLAN.md rule 8). */
+function titleBlock(pen,a,b){
+  const w=(b.x-a.x),h=(b.y-a.y),x=a.x+w*.035,y=b.y-h*.045,SZ=h*.019;
+  pen.line([[a.x+w*.022,a.y+h*.03],[b.x-w*.022,a.y+h*.03],[b.x-w*.022,b.y-h*.03],
+            [a.x+w*.022,b.y-h*.03]],'slate',1.6,{closed:true,tone:.55,amp:.2});
+  const rows=[['NATURAL SELECTION CAPITAL HQ',1.5],
+              ['PLAN \u00B7 '+ROOMS.length+' ROOMS',.95],
+              ['RUN '+RUN.run_id.toUpperCase()+' \u00B7 '+RUN.generations+' GENERATIONS',.8],
+              [RUN.population+' FLIES A TRIBE \u00B7 '+RUN.tribes.length+' TRIBES',.8]];
+  let z=y-SZ*(rows.length)*1.5;
+  for(const [line,scale] of rows){
+    text(pen,line,[x,z],SZ*scale,{ink:scale>1?'ghost':'slate',tone:scale>1?.85:.6,w:SZ*scale*.12});
+    z+=SZ*scale*1.7;
+  }
+  text(pen,'DRAWN IN CODE \u00B7 NO NUMBER HERE IS TYPED',[x,z+SZ*.4],SZ*.62,{ink:'slate',tone:.45,w:SZ*.07});
+}
+
+/* Night to day, tied to the generation: one wash over the whole frame, the same for every ink,
+   so the tribes stay exactly as comparable at dawn as they were at midnight (visuals/style.md). */
+const dayShare=()=>RUN&&RUN.generations>1?clamp(GEN/(RUN.generations-1),0,1):0;
+function daylight(a,b){
+  if(!DAYLIGHT)return;
+  const u=dayShare();
+  ctx.globalCompositeOperation='screen';
+  ctx.fillStyle=css(INKS.slate,.012+u*.072);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
+  ctx.fillStyle=css(INKS.ghost,.006+u*.115);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
+  ctx.globalCompositeOperation='source-over';
 }
 
 function frame(){
@@ -158,7 +281,8 @@ const up=e=>{pointers.delete(e.pointerId);pinch=null;if(pointers.size)return;if(
 stage.addEventListener('pointerup',up);stage.addEventListener('pointercancel',up);
 stage.addEventListener('wheel',e=>{e.preventDefault();touch();vel={x:0,y:0};const a=toWorld(e.clientX,e.clientY);
   cam.zoom=clamp(cam.zoom*Math.exp(-clamp(e.deltaY,-300,300)*.0015),MIN_Z,MAX_Z);cam.x=a.x-(e.clientX-W/2)/cam.zoom;cam.y=a.y-(e.clientY-H/2)/cam.zoom},{passive:false});
-stage.addEventListener('dblclick',e=>{const w=toWorld(e.clientX,e.clientY),r=ROOMS.find(r=>w.x>=r.bounds[0]&&w.x<=r.bounds[2]&&w.y>=r.bounds[1]&&w.y<=r.bounds[3]);
+stage.addEventListener('dblclick',e=>{const w=toWorld(e.clientX,e.clientY),r=ROOMS.find(r=>{const b=roomBounds(r);
+    return w.x>=b[0]&&w.x<=b[2]&&w.y>=b[1]&&w.y<=b[3]});
   if(r){touch();tourIndex=ROOMS.indexOf(r);flyTo(framing(r.bounds))}});
 addEventListener('keydown',e=>{if(e.metaKey||e.ctrlKey||e.altKey)return;const k=e.key.toLowerCase(),step=(e.shiftKey?28:120)/cam.zoom;touch();
   /* A key moves camBase, not just cam: cam is rebuilt from camBase plus the idle drift every
@@ -939,16 +1063,330 @@ room({id:'gallery',col:3,row:3,w:8,d:7,h:3.2,
     pen.lamp(7.4,1.2,{t});
   }});
 
+/* =====================  THE TREE OF LIFE  =====================
+   Every fly of every generation, as one branching tree per tribe. A branch is a lineage: it
+   climbs one storey per generation and stops dead where selection eliminated the fly. The
+   champion's line is the gold one, and it is the only gold in the room (visuals/style.md).
+   Everything here is RUN.lineage, which is the `parent` field of every fly's own log record. */
+const TREE={};
+function treeLayout(tribe){
+  if(TREE[tribe])return TREE[tribe];
+  const L=RUN.lineage[tribe],gens=L.flies,n=gens[0].length;
+  /* A branch keeps its parent's place on the floor, so a lineage draws as one trunk instead
+     of jumping across the room every time the population is re-ranked. Children of one parent
+     fan out to either side of it, which is what makes a fork visible: twenty survivors carrying
+     seventy children between them is the shape selection actually has. A fly with no parent in
+     the previous generation starts a trunk of its own, at the seat it was drawn into. */
+  const xs=gens.map(()=>new Array(n).fill(0));
+  for(let k=0;k<n;k++)xs[0][k]=(k+.5)/n;
+  const SPREAD=.026;
+  for(let g=1;g<gens.length;g++){
+    const kids={};
+    gens[g].forEach((f,k)=>{if(f.p>=0)(kids[f.p]=kids[f.p]||[]).push(k)});
+    for(let k=0;k<n;k++){
+      const f=gens[g][k];
+      if(f.p<0){xs[g][k]=(k+.5)/n;continue}
+      const sib=kids[f.p],mid=(sib.length-1)/2;
+      xs[g][k]=clamp(xs[g-1][f.p]+(sib.indexOf(k)-mid)*SPREAD,.006,.994);
+    }
+  }
+  return TREE[tribe]={xs,gens,champion:L.champion,n};
+}
+room({id:'tree',col:0,row:4,w:11,d:8,h:3.8,
+  style:{floor:['slate',.26],wall:['slate',.1],wall2:['slate',.13],planks:false},
+  draw(pen,t,R){
+    const p=pen.p;
+    text(pen,'THE TREE OF LIFE',pen.wallQuad('i',.55,3.62,.01,.01,.06)[0],14,{wall:'i',w:1.3});
+    if(!RUN.lineage){text(pen,'NO LINEAGE IN THIS EXPORT',pen.wallQuad('i',.55,2.9,.01,.01,.06)[0],7,{wall:'i',tone:.5});return}
+    const gens=RUN.generations,shown=Math.min(GEN+1,gens);
+    text(pen,'EVERY FLY, EVERY GENERATION',pen.wallQuad('i',.55,3.38,.01,.01,.06)[0],6,{wall:'i',tone:.5});
+    text(pen,'A BRANCH ENDS WHERE THE FLY WAS ELIMINATED',
+         pen.wallQuad('i',.55,3.20,.01,.01,.06)[0],5.4,{wall:'i',tone:.42});
+
+    const BOT=.18,TOP=3.25,zOf=g=>BOT+(TOP-BOT)*(gens<2?1:g/(gens-1));
+    for(const [tribe,i0,wid] of [['real',.7,4.4],['scrambled',5.9,4.4]]){
+      const L=treeLayout(tribe),ink=TRIBE_INK[tribe],champ=L.champion;
+      const X=(g,k)=>i0+L.xs[g][k]*wid, J=g=>5.2-g/Math.max(1,gens-1)*1.5;
+      // the ground each tree stands on, and its label
+      pen.line([p(i0-.25,J(0)+.5,BOT-.08),p(i0+wid+.25,J(0)+.5,BOT-.08)],'slate',1.2,{tone:.5});
+      text(pen,tribe.toUpperCase()+' TRIBE',p(i0,J(0)+1.15,BOT-.1),7.5,{ink,tone:.75,w:1.1});
+      for(let g=1;g<shown;g++){
+        const row=L.gens[g],prev=L.gens[g-1];
+        for(let k=0;k<row.length;k++){
+          const f=row[k];if(f.p<0)continue;
+          const a=p(X(g-1,f.p),J(g-1),zOf(g-1)),b=p(X(g,k),J(g),zOf(g));
+          const gold=champ.seats[g]===k&&champ.seats[g-1]===f.p;
+          if(gold)continue;                                   // drawn last, on top of its cousins
+          const dead=prev[f.p].e&&f.o!=='s';
+          pen.line([a,b],ink,f.o==='s'?1.35:.7,{tone:dead?.18:(f.o==='s'?.6:.38),amp:0});
+        }
+      }
+      // where a branch stopped: the fly selection dropped, marked with a short cross-stroke
+      for(let g=0;g<shown;g++){
+        const row=L.gens[g],z=zOf(g),grown=g<shown-1?1:(PLAYING?SEL:1);
+        for(let k=0;k<row.length;k++){
+          if(!row[k].e)continue;
+          const q=p(X(g,k),J(g),z);
+          if(grown<=0)continue;
+          pen.line([[q[0]-2.6,q[1]-2.6],[q[0]+2.6,q[1]+2.6]],ink,.85,{tone:.28*grown,amp:0});
+        }
+        for(let k=0;k<row.length;k++){
+          if(row[k].e)continue;
+          const q=p(X(g,k),J(g),z);
+          pen.dot(q[0],q[1],1.5,ink,.6);
+        }
+      }
+      // the champion's line, gold, from the generation it began in to the one it won
+      let drew=false;
+      for(let g=1;g<shown;g++){
+        const a=champ.seats[g-1],b=champ.seats[g];if(a<0||b<0)continue;
+        pen.line([p(X(g-1,a),J(g-1),zOf(g-1)),p(X(g,b),J(g),zOf(g))],'gold',2.1,{tone:.85,amp:.25});
+        drew=true;
+      }
+      const tip=champ.seats[shown-1];
+      if(tip>=0){const q=p(X(shown-1,tip),J(shown-1),zOf(shown-1));
+        pen.halo(q[0],q[1],9+Math.sin(t*2.4)*2,'gold',.3);pen.dot(q[0],q[1],2.4,'gold',1)}
+      if(drew&&tribe==='real')
+        text(pen,champ.id,p(i0,J(gens-1)-.9,TOP+.22),6,{ink:'gold',tone:.8});
+    }
+    for(let g=0;g<gens;g+=Math.max(1,Math.ceil(gens/6))){
+      text(pen,'GEN '+S3(g),pen.wallQuad('j',7.3,zOf(g)-.06,.01,.01,.05)[0],5.4,{wall:'j',tone:.4});
+      pen.line([p(-.02,7.4,zOf(g)),p(-.02,7.6,zOf(g))],'slate',.7,{tone:.5});
+    }
+    pen.fly(10.2,6.8,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:.9});
+    pen.lamp(10.4,1.1,{t});
+  }});
+
+/* =====================  THE BARCODE WALL  =====================
+   One column per fly, one row per generation, the whole run as a printed barcode. Fitness sets
+   the DENSITY of the ink, never its hue: cyan is the real tribe and magenta the scrambled one
+   and nothing else, so the two blocks stay comparable in greyscale (visuals/style.md). The
+   scale is shared between the tribes, so a dark band means the same thing in both. */
+room({id:'barcode',col:1,row:4,w:10,d:7,h:3.4,
+  style:{floor:['slate',.26],wall:['slate',.09],wall2:['slate',.12],planks:false},
+  draw(pen,t,R){
+    const p=pen.p;
+    text(pen,'THE BARCODE WALL',pen.wallQuad('i',.5,3.26,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!RUN.lineage){text(pen,'NO LINEAGE IN THIS EXPORT',pen.wallQuad('i',.5,2.9,.01,.01,.06)[0],7,{wall:'i',tone:.5});return}
+    const gens=RUN.generations,pop=RUN.population;
+    // one shared scale, from the worst fly of the run to the best, over both tribes
+    let lo=Infinity,hi=-Infinity;
+    for(const tribe of RUN.tribes)for(const row of RUN.lineage[tribe].flies)for(const f of row){
+      if(f.f<lo)lo=f.f; if(f.f>hi)hi=f.f}
+    const span=Math.max(1e-9,hi-lo),norm=v=>clamp((v-lo)/span,0,1);
+
+    const X0=.42,WID=9.1,cw=WID/pop;
+    for(const [ti,tribe] of RUN.tribes.entries()){
+      const ink=TRIBE_INK[tribe],rows=RUN.lineage[tribe].flies,champ=RUN.lineage[tribe].champion;
+      const TOP=2.56-ti*1.28,rh=.90/gens,Z0=TOP-.90;       // real block up top, scrambled beneath
+      text(pen,tribe.toUpperCase(),pen.wallQuad('i',X0,TOP+.28,.01,.01,.06)[0],7,{wall:'i',ink,tone:.8});
+      for(let g=0;g<gens;g++){
+        if(g>GEN)break;
+        const z=TOP-(g+1)*rh;
+        for(let k=0;k<pop;k++){
+          const f=rows[g][k],tone=.1+norm(f.f)*.82;
+          pen.tint(pen.wallQuad('i',X0+k*cw,z,cw*.9,rh*.86,.055),ink,tone);
+          if(f.e)pen.line([pen.wallQuad('i',X0+k*cw,z+rh*.43,.01,.01,.05)[0],
+                           pen.wallQuad('i',X0+(k+.9)*cw,z+rh*.43,.01,.01,.05)[0]],'slate',.45,{tone:.5,amp:0});
+        }
+        if(champ.seats[g]>=0)
+          pen.line(pen.wallQuad('i',X0+champ.seats[g]*cw,z,cw*.9,rh*.86,.07),'gold',.9,{closed:true,tone:.9,amp:.15});
+        if(g%Math.max(1,Math.ceil(gens/6))===0)
+          text(pen,S3(g),pen.wallQuad('i',X0-.42,z,.01,.01,.06)[0],4.6,{wall:'i',tone:.42});
+      }
+    }
+    text(pen,'COLUMNS ARE FLIES ('+pop+') · ROWS ARE GENERATIONS · DENSER INK IS HIGHER FITNESS',
+         pen.wallQuad('i',.5,.30,.01,.01,.06)[0],5.2,{wall:'i',tone:.46});
+    text(pen,'A STRUCK-THROUGH CELL WAS ELIMINATED · GOLD IS THE CHAMPION LINE',
+         pen.wallQuad('i',.5,.14,.01,.01,.06)[0],5.2,{wall:'i',tone:.4});
+    // the scale bar, printed in a neutral ink because it belongs to neither tribe
+    for(let k=0;k<26;k++)pen.tint(pen.wallQuad('j',1.2+k*.17,.42,.15,.26,.05),'slate',.1+k/25*.82);
+    text(pen,'FITNESS '+lo.toFixed(3),pen.wallQuad('j',1.2,.16,.01,.01,.05)[0],5,{wall:'j',tone:.45});
+    text(pen,hi.toFixed(3),pen.wallQuad('j',5.0,.16,.01,.01,.05)[0],5,{wall:'j',tone:.45});
+    pen.fly(9.2,6,0,{t,pose:'hover',ink:'slate',scale:1.1,facing:-1,phase:1.7});
+    pen.lamp(9.4,1.1,{t});
+  }});
+
+/* =====================  THE TICKER TAPE HALL  =====================
+   Real fills, scrolling. RUN.tape is every trade the last generation's best flies made on the
+   four fixed days - rebuilt by the exporter from the decisions the logs recorded, put back
+   through the same wallet on the same bars, and only exported because every fly's replayed
+   equity landed on the equity its log already held. */
+room({id:'tape',col:2,row:4,w:12,d:5,h:3,
+  style:{floor:['slate',.27],wall:['slate',.1],wall2:['slate',.12],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,tape=RUN.tape;
+    text(pen,'THE TICKER TAPE HALL',pen.wallQuad('i',.5,2.88,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!tape||!tape.fills.length){text(pen,'NO TRADE TAPE IN THIS EXPORT',pen.wallQuad('i',.5,2.5,.01,.01,.06)[0],7,{wall:'i',tone:.5});return}
+    const fills=tape.fills,ROWS=11,speed=1.15;
+    const head=(t*speed)%fills.length;
+    text(pen,fills.length+' FILLS · GENERATION '+S3(tape.generation)+' · TOP '+tape.flies_per_tribe+' FLIES A TRIBE, ALL FOUR FIXED DAYS',
+         pen.wallQuad('i',.5,2.62,.01,.01,.06)[0],5.6,{wall:'i',tone:.5});
+
+    /* the tape itself: a paper ribbon hung down the long wall, rows sliding up it */
+    pen.shape(pen.wallQuad('i',.45,.32,8.9,1.78,.05),['slate',.07],{w:1.1});
+    const rh=1.7/ROWS;
+    for(let r=0;r<ROWS;r++){
+      const k=Math.floor(head)+r,f=fills[((k%fills.length)+fills.length)%fills.length];
+      const slide=(1-(head-Math.floor(head)))*rh;
+      const z=.36+r*rh+slide-rh, fade=clamp(Math.min(r+1,ROWS-r)/2.2,0,1)*(r===0?.5:1);
+      if(z<.3||z>2.06)continue;
+      const ink=TRIBE_INK[f.tribe],W=(a,zz)=>pen.wallQuad('i',a,zz,.01,.01,.06)[0];
+      pen.dot(...W(.62,z+rh*.34),1.9,ink,.85*fade);
+      text(pen,f.t.slice(11,16),W(.86,z+rh*.08),5.4,{wall:'i',tone:.5*fade});
+      text(pen,f.side.toUpperCase(),W(1.9,z+rh*.08),5.8,{wall:'i',ink,tone:.9*fade,w:1.2});
+      text(pen,'$'+f.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),
+           W(3.1,z+rh*.08),5.4,{wall:'i',tone:.62*fade});
+      text(pen,f.fly,W(5.3,z+rh*.08),5,{wall:'i',ink,tone:.5*fade});
+      text(pen,money(f.equity),W(7.6,z+rh*.08),5.4,{wall:'i',tone:.55*fade});
+      pen.line([W(.55,z),W(9.3,z)],'slate',.4,{tone:.3*fade,amp:0});
+    }
+    // the day the head fill belongs to, and the two tribes' share of the tape
+    const now=fills[Math.floor(head)%fills.length];
+    text(pen,'DAY '+(now.day+1)+' OF 4 · '+now.t.slice(0,10),pen.wallQuad('j',3.4,2.34,.01,.01,.05)[0],6,{wall:'j',tone:.55});
+    let counts={};for(const f of fills)counts[f.tribe]=(counts[f.tribe]||0)+1;
+    RUN.tribes.forEach((tribe,i)=>{
+      const n=counts[tribe]||0,wid=3.1*n/fills.length;
+      pen.tint(pen.wallQuad('j',.6,1.72-i*.42,wid,.26,.05),TRIBE_INK[tribe],.62);
+      text(pen,n+' '+tribe.toUpperCase(),pen.wallQuad('j',.6+wid+.16,1.74-i*.42,.01,.01,.05)[0],5.2,
+           {wall:'j',ink:TRIBE_INK[tribe],tone:.7});
+    });
+    text(pen,'REBUILT FROM THE LOGGED DECISIONS,',pen.wallQuad('j',.6,.72,.01,.01,.05)[0],5,{wall:'j',tone:.42});
+    text(pen,'REPLAYED THROUGH THE SAME WALLET',pen.wallQuad('j',.6,.54,.01,.01,.05)[0],5,{wall:'j',tone:.42});
+    text(pen,'ON THE SAME BARS · '+tape.days_checked+' FLY-DAYS CHECKED',pen.wallQuad('j',.6,.36,.01,.01,.05)[0],5,{wall:'j',tone:.42});
+    // a printer at the end of the hall, spitting the ribbon out
+    pen.box(10.3,1.9,0,1.1,1.2,.8,{ink:'slate',tone:.4});
+    pen.line([p(10.5,2.1,.8),p(10.5,2.1,1.6),p(10.2,2.1,2.1)],'ghost',1.1,{tone:.4,amp:.8});
+    pen.fly(9.6,3.9,0,{t,pose:'hover',ink:'slate',scale:1.1,facing:-1,phase:2.2});
+    pen.lamp(11.2,.9,{t});
+  }});
+
+/* =====================  THE REPLAY ROOM  =====================
+   The two final champions, one training day, decision by decision. Nothing in this room comes
+   from a generation log: the margins and the readout groups were never written down, so
+   scripts/replay_champions.py re-ran both flies on one day of the EVOLVE set and recorded them.
+   It reproduced the actions the run logged for the same flies on the same day, bar for bar. */
+room({id:'replay',col:3,row:4,w:10,d:7,h:3.4,
+  style:{floor:['slate',.26],wall:['slate',.09],wall2:['slate',.12],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,rep=RUN.replay;
+    text(pen,'THE REPLAY ROOM',pen.wallQuad('i',.5,3.28,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!rep){text(pen,'NO REPLAY IN THIS EXPORT',pen.wallQuad('i',.5,2.9,.01,.01,.06)[0],7,{wall:'i',tone:.5});return}
+    const N=rep.champions.real.bars.length,bi=Math.floor(t*4)%N;
+    text(pen,rep.window.first_time.slice(0,10)+' · ONE TRAINING DAY · BAR '+(bi+1)+' OF '+N,
+         pen.wallQuad('i',.5,3.02,.01,.01,.06)[0],6,{wall:'i',tone:.55});
+
+    RUN.tribes.forEach((tribe,ti)=>{
+      const c=rep.champions[tribe];if(!c)return;
+      const ink=TRIBE_INK[tribe],X=.45+ti*4.75,bar=c.bars[bi];
+      const W=(a,z)=>pen.wallQuad('i',X+a,z,.01,.01,.06)[0];
+      /* the whole day as one strip, with the playhead on it, above everything it explains */
+      for(let k=0;k<N;k+=2){
+        const a=c.bars[k].a;if(a==='hold')continue;
+        pen.line([W(.02+k/N*3.86,2.70),W(.02+k/N*3.86,2.78)],ink,.7,{tone:a==='buy'?.75:.4,amp:0});
+      }
+      pen.line([W(.02+bi/N*3.86,2.66),W(.02+bi/N*3.86,2.82)],'gold',1.4,{tone:.9,amp:0});
+      text(pen,c.id,W(0,2.54),6.4,{wall:'i',ink,tone:.85,w:1.2});
+      text(pen,'BORN GEN '+S3(c.born)+' · PARENT '+(c.parent||'—'),W(0,2.36),4.6,{wall:'i',tone:.42});
+      text(pen,'AGREED WITH THE LOG ON '+c.bars_same+' OF '+N+' BARS',W(0,2.20),4.4,{wall:'i',tone:.45});
+
+      /* the two votes. A fly acts on the CHANGE in its own vote, not its level, so the bar
+         drawn is the margin against its own running average, and the zero line is the decision. */
+      const Z0=1.74,HALF=.36,mx=Math.max(.02,Math.max(Math.abs(bar.mb),Math.abs(bar.ms))*1.25);
+      pen.line([W(0,Z0),W(3.9,Z0)],'ghost',.8,{tone:.45,amp:.2});
+      text(pen,'0',W(-.22,Z0-.06),4.6,{wall:'i',tone:.4});
+      [['BUY',bar.mb,.35],['SELL',bar.ms,2.1]].forEach(([name,v,at])=>{
+        const hgt=clamp(v/mx,-1,1)*HALF,won=(bar.a===name.toLowerCase());
+        pen.tint(pen.wallQuad('i',X+at,Z0+Math.min(0,hgt),1.35,Math.abs(hgt)||.005,.055),ink,won?.85:.35);
+        pen.line(pen.wallQuad('i',X+at,Z0+Math.min(0,hgt),1.35,Math.abs(hgt)||.005,.07),won?'gold':'ghost',
+                 won?1.3:.7,{closed:true,tone:won?.9:.35,amp:.15});
+        text(pen,name,W(at,Z0-HALF-.14),5,{wall:'i',tone:won?.85:.45});
+        text(pen,(v>=0?'+':'')+v.toFixed(4),W(at,Z0-HALF-.31),4.4,{wall:'i',tone:.45});
+      });
+      // what it did, and what the day has done to its wallet so far
+      const act=bar.a.toUpperCase();
+      text(pen,act,W(0,.98),11,{wall:'i',ink:bar.a==='hold'?'ghost':ink,tone:bar.a==='hold'?.5:.95,w:1.5});
+      text(pen,'$'+bar.p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),W(1.7,.98),5.4,{wall:'i',tone:.55});
+      text(pen,(bar.pos?'LONG':'FLAT')+' → '+money(bar.eq),W(1.7,.80),5.4,{wall:'i',tone:.55});
+
+      /* the loudest readout groups behind this decision, named from the release's annotations */
+      text(pen,'LOUDEST READOUT GROUPS',W(0,.62),4.8,{wall:'i',tone:.5});
+      const top=bar.g.slice(0,3),gmax=Math.max(1e-6,...top.map(g=>Math.abs(g[2])));
+      top.forEach((g,k)=>{
+        const z=.44-k*.155,wid=1.5*Math.abs(g[2])/gmax;
+        pen.tint(pen.wallQuad('i',X+2.0,z-.075,wid,.075,.055),ink,.28+.5*Math.abs(g[2])/gmax);
+        text(pen,(c.groups[g[0]]||('GROUP '+g[0])).slice(0,16),W(0,z),4.4,{wall:'i',tone:.62});
+      });
+    });
+    pen.table(3.4,4.6,3.4,1.5,.75,{ink:'slate',tone:.35});
+    pen.fly(1.6,5.2,0,{t,pose:'hover',ink:'cyan',scale:1.2,facing:1,phase:.4});
+    pen.fly(7.8,5.4,0,{t,pose:'hover',ink:'magenta',scale:1.2,facing:-1,phase:2.1});
+    pen.lamp(9.4,1.1,{t});
+  }});
+
+/* =====================  THE FLY'S-EYE VIEW  =====================
+   The chart, as the compound eye carves it up. RUN.eye is where each of the eye's 5,494
+   photoreceptors looks at the 64x64 chart - a layout nfly computes from the REAL connectome's
+   edges and both tribes share (PLAN.md) - pooled onto drawable ommatidia, each carrying the
+   mean drive of the photoreceptors inside it on one recorded bar. */
+room({id:'flyeye',col:3,row:-1,w:8,d:7,h:3.4,
+  style:{floor:['slate',.27],wall:['slate',.09],wall2:['slate',.12],planks:false},
+  draw(pen,t,R){
+    const p=pen.p,eye=RUN.eye;
+    text(pen,"THE FLY'S-EYE VIEW",pen.wallQuad('i',.5,3.22,.01,.01,.06)[0],13,{wall:'i',w:1.3});
+    if(!eye){text(pen,'NO EYE IN THIS EXPORT',pen.wallQuad('i',.5,2.86,.01,.01,.06)[0],7,{wall:'i',tone:.5});return}
+    const fr=eye.frames,fi=Math.floor(t*1.6)%fr.length,frame=fr[fi];
+    text(pen,eye.photoreceptors.toLocaleString('en-US')+' PHOTORECEPTORS POOLED ONTO '+eye.cells+
+         ' OMMATIDIA · BAR '+frame.bar,pen.wallQuad('i',.5,2.96,.01,.01,.06)[0],5.4,{wall:'i',tone:.5});
+
+    /* the eye. Each cell sits where its photoreceptors look at the chart, bulged onto a dome so
+       the field reads as an eye rather than a graph; brightness is the drive it recorded. */
+    const cx=3.5,cy=3.4,RX=2.5,RY=2.1,ZC=1.85;
+    let mx=1e-6;for(const v of frame.v)if(v>mx)mx=v;
+    eye.layout.forEach(([u,v],k)=>{
+      const rr=Math.min(1,Math.hypot(u,v)),bulge=Math.sqrt(Math.max(0,1-rr*rr));
+      const i=cx+u*RX,j=cy+v*RY*.55,z=ZC+bulge*.85-v*RY*.34;
+      const lit=clamp(frame.v[k]/mx,0,1);
+      pen.shape(ellipse2(...p(i,j,z),7.4,6.2,0,6),['cyan',.05+lit*.85],{w:.7,line:'cyan',lineTone:.3});
+      if(lit>.72)pen.halo(...p(i,j,z),8,'cyan',.16);
+    });
+    pen.glow(cx,cy,1.5,3.0,'cyan',.09);
+    text(pen,'THE EYE LAYOUT IS THE REAL CONNECTOME’S, FOR BOTH TRIBES',
+         pen.wallQuad('i',.5,.32,.01,.01,.06)[0],5,{wall:'i',tone:.45});
+    text(pen,'PER OMMATIDIUM: '+Math.round(eye.photoreceptors/eye.cells)+' PHOTORECEPTORS ON AVERAGE',
+         pen.wallQuad('i',.5,.16,.01,.01,.06)[0],5,{wall:'i',tone:.42});
+
+    /* the same bar's candles beside it, so the eye can be read against what it was looking at */
+    const day=(RUN.windows&&RUN.windows[0])||null,bars=(day&&day.candles)||[];
+    pen.shape(pen.wallQuad('j',.6,1.5,3.4,1.15,.05),['slate',.08],{w:1});
+    if(bars.length){
+      const lo=Math.min(...bars.map(q=>q[2])),hi=Math.max(...bars.map(q=>q[1]));
+      bars.forEach((b,k)=>{
+        const u=.75+k/bars.length*3.1,Z=v=>1.6+(v-lo)/Math.max(1e-9,hi-lo)*.92;
+        pen.line([pen.wallQuad('j',u,Z(b[2]),.01,.01,.05)[0],pen.wallQuad('j',u,Z(b[1]),.01,.01,.05)[0]],
+                 b[3]>=b[0]?'cyan':'magenta',1,{tone:.5,amp:.15});
+      });
+    }
+    text(pen,'WHAT IT IS LOOKING AT',pen.wallQuad('j',.6,1.3,.01,.01,.05)[0],5.2,{wall:'j',tone:.5});
+    text(pen,'DRIVE FROM THE FRAME CHANNEL;',pen.wallQuad('j',.6,.66,.01,.01,.05)[0],4.6,{wall:'j',tone:.4});
+    text(pen,'IN A TRADING BAR A SECOND CHANNEL',pen.wallQuad('j',.6,.5,.01,.01,.05)[0],4.6,{wall:'j',tone:.4});
+    text(pen,'CARRIES THE CHART’S CHANGE',pen.wallQuad('j',.6,.34,.01,.01,.05)[0],4.6,{wall:'j',tone:.4});
+    pen.fly(7.1,5.9,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:1.1});
+    pen.lamp(7.5,1.1,{t});
+  }});
+
 /* =====================  THE OVERLAY  =====================
    What lives between rooms: a night sky, the building's sign, and the hero on its rounds. */
-const buildingBounds=()=>ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);
+const buildingBounds=()=>ROOMS.reduce((a,r)=>{const b=roomBounds(r);
+  return [Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])]},[1e9,1e9,-1e9,-1e9]);
 function overlay(pen,t,a,b){
   if(!RUN)return;
+  if(VIEW==='blueprint')return titleBlock(pen,a,b);
   const B=buildingBounds(),cx=(B[0]+B[2])/2,S=stream('stars');
   for(let k=0;k<220;k++){const x=lerp(B[0]-420,B[2]+420,S()),y=lerp(B[1]-520,B[3]+260,S()),r=rand(S,.6,1.8),ph=rand(S,0,TAU);
     if(x<a.x||x>b.x||y<a.y||y>b.y)continue;
     if(ROOMS.some(q=>x>q.bounds[0]&&x<q.bounds[2]&&y>q.bounds[1]&&y<q.bounds[3]))continue;
-    pen.dot(x,y,r,'ghost',.25+.35*(.5+.5*Math.sin(t*1.3+ph)))}
+    pen.dot(x,y,r,'ghost',(.25+.35*(.5+.5*Math.sin(t*1.3+ph)))*(DAYLIGHT?1-dayShare()*.85:1))}
   textCentred(pen,'NATURAL SELECTION CAPITAL',[cx,B[1]-190],68,{w:5,gap:.3,amp:.5});
   textCentred(pen,'HQ · WHERE A HUNDRED FRUIT-FLY BRAINS TRADE BITCOIN',[cx,B[1]-82],20,{ink:'gold',w:2,tone:.9});
   if(CAM_MODE==='hero'&&HERO_POS){
@@ -965,33 +1403,54 @@ function overlay(pen,t,a,b){
    shot by shot - a room, then sometimes a push in on its detail - or follows the hero, or
    pulls back to the whole building. Everything runs on NOW(), so the recorder can step it. */
 const MS_PER_GEN=3600,SEL_FROM=.45,SHOT_MS=4400,HERO_LEG_MS=5200,HERO_ZOOM=2.3;
-const ROOM_ORDER=['street','lab','server','brain','eye','floor','pile','nursery','switchboard',
-                 'hero','gallery','archive','overfit','toll','model','corridor','boardroom','vault'];
+const ROOM_ORDER=['street','lab','server','brain','eye','flyeye','floor','pile','nursery','tree',
+                 'barcode','switchboard','hero','gallery','archive','overfit','tape','replay',
+                 'toll','model','corridor','boardroom','vault'];
 const SHOTS=[{room:'lab'},{room:'lab',focus:[4.9,3.2,1.0],zoom:2.4},{room:'brain'},{room:'floor'},
-  {room:'floor',focus:[5,.2,2.3],zoom:1.9},{room:'pile'},{room:'nursery'},{room:'hero'},
-  {room:'hero',focus:[3.3,4.6,1.3],zoom:2.5},{room:'archive'},{room:'overfit'},{room:'model'},
+  {room:'floor',focus:[5,.2,2.3],zoom:1.9},{room:'pile'},{room:'nursery'},{room:'tree'},
+  {room:'tree',focus:[3,3,2.4],zoom:1.8},{room:'barcode'},{room:'hero'},
+  {room:'hero',focus:[3.3,4.6,1.3],zoom:2.5},{room:'archive'},{room:'overfit'},{room:'tape'},
+  {room:'replay'},{room:'replay',focus:[2.4,.1,1.6],zoom:2.0},{room:'flyeye'},{room:'model'},
   {room:'model',focus:[3.3,4.5,1.7],zoom:2.3},{room:'vault'}];
-const NAMES={lab:'lab',brain:'brain',floor:'floor',pile:'pile',nursery:'nursery',hero:"hero's desk",
-             archive:'archive',overfit:'overfit',model:'model',vault:'vault'};
+const NAMES={street:'street',lab:'lab',server:'server',brain:'brain',eye:'eye',flyeye:"fly's eye",
+             floor:'floor',pile:'pile',nursery:'nursery',tree:'tree of life',barcode:'barcode',
+             switchboard:'switchboard',hero:"hero's desk",gallery:'gallery',archive:'archive',
+             overfit:'overfit',tape:'ticker tape',replay:'replay',toll:'toll',model:'model',
+             corridor:'corridor',boardroom:'boardroom',vault:'vault'};
 const DRIVEN=()=>!!window.__HEDGEFLY_VCLOCK_DRIVEN__;
 let CAM_MODE='tour',genStart=0,shotStart=0,shotIndex=-1,heroStart=0,HERO_POS=null,heroTrail=[];
 let REPLY=-1;                                    // which of the model's logged replies is on the wall; -1 = its last
 const ui={play:document.getElementById('play'),scrub:document.getElementById('scrub'),label:document.getElementById('label'),
           stat:document.getElementById('stat'),rooms:document.getElementById('rooms'),terminal:document.getElementById('terminal'),
-          inset:document.getElementById('inset'),building:document.getElementById('building'),herocam:document.getElementById('herocam')};
+          inset:document.getElementById('inset'),building:document.getElementById('building'),herocam:document.getElementById('herocam'),
+          about:document.getElementById('about'),aboutbtn:document.getElementById('aboutbtn')};
 const roomById=id=>ROOMS.find(r=>r.id===id);
 function light(id){for(const b of ui.rooms.children)b.classList.toggle('on',b.dataset.room===id);
   ui.building.classList.toggle('on',CAM_MODE==='building');ui.herocam.classList.toggle('on',CAM_MODE==='hero')}
-function shotTarget(s){const r=roomById(s.room),base=framing(r.bounds);if(!s.focus)return base;
-  const [x,y]=iso(r.oi+s.focus[0],r.oj+s.focus[1],s.focus[2]);return {x,y,zoom:clamp(base.zoom*s.zoom,MIN_Z,MAX_Z)}}
+function shotTarget(s){const r=roomById(s.room),base=framing(roomBounds(r));if(!s.focus)return base;
+  const [dx,dy]=roomOffset(r),[x,y]=iso(r.oi+s.focus[0],r.oj+s.focus[1],s.focus[2]);
+  return {x:x+dx,y:y+dy,zoom:clamp(base.zoom*s.zoom,MIN_Z,MAX_Z)}}
 function jump(target,ms){if(ms<=0){Object.assign(cam,target);camBase={...target};tween=null;lastCam=''}else flyTo(target,ms)}
 function goShot(k,ms=2600){CAM_MODE='tour';shotIndex=(k+SHOTS.length)%SHOTS.length;shotStart=NOW();jump(shotTarget(SHOTS[shotIndex]),ms);light(SHOTS[shotIndex].room)}
-function goToRoom(id,ms=1400){const r=roomById(id);if(!r)return;CAM_MODE='free';jump(framing(r.bounds),ms);light(id)}
+function goToRoom(id,ms=1400){const r=roomById(id);if(!r)return;CAM_MODE='free';jump(framing(roomBounds(r)),ms);light(id)}
 function building(ms=2800){CAM_MODE='building';const B=buildingBounds();
   jump(framing([B[0]-60,B[1]-260,B[2]+60,B[3]+40]),ms);light(null)}
 function heroCam(){CAM_MODE='hero';heroStart=NOW();heroTrail=[];tween=null;light(null)}
+/* Switching view re-frames whatever the camera was on, because the dollhouse moves the rooms
+   and the blueprint changes what there is to look at. `rooms` is the way in and the way back. */
+function setView(name,ms=900){
+  VIEW=(name===VIEW&&name!=='rooms')?'rooms':name;
+  lastCam='';paint();
+  if(VIEW==='rooms'&&CAM_MODE==='free'){const on=ROOM_ORDER.find(id=>
+    document.querySelector('#rooms button[data-room="'+id+'"].on'));if(on)return goToRoom(on,ms)}
+  if(VIEW==='blueprint'){CAM_MODE='building';const B=buildingBounds();
+    return jump(framing([B[0]-40,B[1]-40,B[2]+40,B[3]+120]),ms),light(null)}
+  building(ms);
+}
+function setDaylight(on){DAYLIGHT=on;lastCam='';paint()}
 function heroCamTarget(){return CAM_MODE==='hero'&&HERO_POS?{x:HERO_POS.x,y:HERO_POS.y-26,zoom:HERO_ZOOM}:null}
-function anchor(id){const r=roomById(id);const [x,y]=iso(r.oi+r.w/2,r.oj+r.d/2,1.9);return {x,y}}
+function anchor(id){const r=roomById(id),[dx,dy]=roomOffset(r);
+  const [x,y]=iso(r.oi+r.w/2,r.oj+r.d/2,1.9);return {x:x+dx,y:y+dy}}
 function updateHero(now){
   const el=now-heroStart,n=ROOM_ORDER.length,k=Math.floor(el/HERO_LEG_MS)%n,u=(el%HERO_LEG_MS)/HERO_LEG_MS;
   const A=anchor(ROOM_ORDER[k]),Bp=anchor(ROOM_ORDER[(k+1)%n]),fly=.6;
@@ -1029,10 +1488,25 @@ function openTerminal(on){
         '<'+'script>window.__HEDGEFLY_RUN__='+JSON.stringify(RUN).replace(/</g,'\\u003c')+';<'+'/script>');
     else frame.src='../terminal/index.html?data='+encodeURIComponent(qs.get('data')||'../hq/runs.json')}
 }
+/* The About panel. Its run line comes out of runs.json like every other figure on screen, and
+   its key list is the director's own legend, so the two can never drift apart. */
+function openAbout(on){
+  ui.about.classList.toggle('open',on);ui.aboutbtn.classList.toggle('on',on);
+  if(!on||!RUN)return;
+  document.getElementById('aboutrun').textContent=
+    `Replaying run ${RUN.run_id}: ${RUN.generations} generations, ${RUN.population} flies a tribe, `+
+    `${RUN.bars_per_window} ${RUN.bar_minutes}-minute bars a day over ${RUN.windows.length} fixed days, `+
+    `${RUN.fee_bps} bps a side, a ${RUN.min_hold_bars}-bar minimum hold. `+
+    `${ROOMS.length} rooms. Exported ${String(RUN.generated).slice(0,10)}.`;
+  document.getElementById('aboutkeys').innerHTML=
+    DIRECTOR.map(([k,what])=>`<dt>${k}</dt><dd>${what}</dd>`).join('');
+}
 function wireUI(){
   ui.play.onclick=()=>{PLAYING=!PLAYING;genStart=NOW();if(PLAYING&&CAM_MODE==='free')goShot(shotIndex+1);paint()};
   ui.scrub.oninput=e=>{PLAYING=false;SEL=1;setGeneration(+e.target.value)};
   ui.terminal.onclick=()=>openTerminal(!ui.inset.classList.contains('open'));
+  ui.aboutbtn.onclick=()=>openAbout(!ui.about.classList.contains('open'));
+  document.getElementById('aboutclose').onclick=()=>openAbout(false);
   ui.building.onclick=()=>building();
   ui.herocam.onclick=()=>CAM_MODE==='hero'?goShot(shotIndex+1):heroCam();
   for(const id of ROOM_ORDER){const b=document.createElement('button');b.textContent=NAMES[id];b.dataset.room=id;
@@ -1042,6 +1516,8 @@ function wireUI(){
     else if(e.key==='['){PLAYING=false;SEL=1;setGeneration(GEN-1)}
     else if(e.key===']'){PLAYING=false;SEL=1;setGeneration(GEN+1)}
     else if(e.key==='t')openTerminal(!ui.inset.classList.contains('open'));
+    else if(e.key==='i'||e.key==='I')openAbout(!ui.about.classList.contains('open'));
+    else if(e.key==='Escape'&&ui.about.classList.contains('open'))openAbout(false);
     else if(e.key==='b')building();
     else if(e.key==='y')ui.herocam.onclick();
     else director(e);
@@ -1062,6 +1538,9 @@ const DIRECTOR=[
   ['SPACE','play / pause'],
   ['SHIFT (hold)','slow motion, and fine pan'],
   ['B  Y  T','building / hero cam / terminal'],
+  ['K  O','blueprint plan / dollhouse section'],
+  ['N','night to day, tied to the generation'],
+  ['I','about, credits and these keys'],
   ['H','hide everything for a clean take'],
   ['F','fullscreen'],
   ['P','save this frame as a png'],
@@ -1088,6 +1567,9 @@ function director(e){
     i=(i+(k==='.'?1:-1)+ROOM_ORDER.length)%ROOM_ORDER.length;
     goToRoom(ROOM_ORDER[i],700);e.preventDefault();return;
   }
+  if(k==='k'||k==='K'){setView('blueprint');e.preventDefault();return}
+  if(k==='o'||k==='O'){setView('dollhouse');e.preventDefault();return}
+  if(k==='n'||k==='N'){setDaylight(!DAYLIGHT);e.preventDefault();return}
   if(k==='h'||k==='H'){hideAll(!document.body.classList.contains('hidden-ui'));e.preventDefault();return}
   if(k==='f'||k==='F'){
     if(document.fullscreenElement)document.exitFullscreen();
@@ -1111,14 +1593,18 @@ window.__hedgefly={ready:false,
   step(ms){window.__HEDGEFLY_VCLOCK__=(window.__HEDGEFLY_VCLOCK__||0)+ms;tickOnce(NOW());stepFrame()},
   shot(kind,arg,ms=0){if(kind==='tour')goShot(arg||0,ms);else if(kind==='room')goToRoom(arg,ms);
     else if(kind==='focus')goShot(SHOTS.findIndex(s=>s.room===arg&&s.focus),ms);
+    else if(kind==='view')setView(arg,ms);
     else if(kind==='building')building(ms);else if(kind==='hero')heroCam()},
+  view(name,ms=0){setView(name,ms)},daylight(on){setDaylight(!!on)},
+  views:()=>['rooms','blueprint','dollhouse'],
   play(on){PLAYING=on;genStart=NOW()},gen(g){setGeneration(g)},sel(s){SEL=s},open(o){OPEN=o},
   reply(i){REPLY=i},
   // a shot that moves by itself: the recorder sets the camera every frame instead of tweening to it
   cam(x,y,zoom){CAM_MODE='free';tween=null;camBase={x,y,zoom:clamp(zoom,MIN_Z,MAX_Z)};
     cam.x=camBase.x;cam.y=camBase.y;cam.zoom=camBase.zoom;lastCam=''},
-  frame(id){const r=roomById(id);return r?framing(r.bounds):null},
-  spot(id,i,j,z=0){const r=roomById(id);if(!r)return null;const [x,y]=iso(r.oi+i,r.oj+j,z);return {x,y}},
+  frame(id){const r=roomById(id);return r?framing(roomBounds(r)):null},
+  spot(id,i,j,z=0){const r=roomById(id);if(!r)return null;
+    const [dx,dy]=roomOffset(r),[x,y]=iso(r.oi+i,r.oj+j,z);return {x:x+dx,y:y+dy}},
   replies(){const f=RUN&&RUN.finale,l=f&&f.passes.with_fees.traders.llm;return l&&l.replies?l.replies.last.length:0},
   rooms:()=>ROOM_ORDER.slice(),hasFinale:()=>!!(RUN&&RUN.finale),generations:()=>RUN?RUN.generations:0};
 async function boot(){
@@ -1131,6 +1617,8 @@ async function boot(){
   PLAYING=qs.get('play')!=='0'&&!qs.has('still')&&!qs.has('record');
   SEL=qs.has('sel')?+qs.get('sel'):(PLAYING?0:1);OPEN=qs.has('open')?+qs.get('open'):1;
   wireUI();paint();start();
+  if(qs.has('view'))VIEW=qs.get('view');
+  if(qs.has('daylight'))DAYLIGHT=qs.get('daylight')!=='0';
   const first=qs.get('room'),mode=qs.get('cam');
   if(mode==='building')building(0);else if(mode==='hero')heroCam();
   else if(first)goToRoom(first,0);else if(PLAYING)goShot(0,0);
