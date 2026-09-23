@@ -25,7 +25,6 @@ if [[ -f scripts/filmpack.mjs ]]; then node scripts/filmpack.mjs --out results/f
 node scripts/build_standalone.mjs --host 100.103.129.82
 
 git add visuals/hq/runs.json visuals/dist/hedgefly.html
-[[ -d results/filmpack ]] && git add results/filmpack
 if git diff --cached --quiet; then
     echo "nothing new to commit"
 else
@@ -40,7 +39,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
     echo "committed and pushed: $(git log --oneline -1)"
 fi
 
-# The films last: they take a while, they are far too big for git (results/film is ignored), and
+# The films last: they take a while, they are far too big for git (results/ is ignored), and
 # they must never turn a good refresh into a failed one.
 node scripts/record_hq.mjs --out results/film || echo "recording failed; the rest of the refresh stands"
 node scripts/record_new.mjs --out results/film3 || echo "the new rooms did not record; the rest of the refresh stands"

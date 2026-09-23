@@ -4,8 +4,7 @@ runs/
 __pycache__/
 *.pyc
 .pytest_cache/
-results/film/
-results/film-extra/
-results/film2/
-results/film3/
-results/final_footage/
+
+# Results and footage stay out of git: they are rebuilt from runs/ and far too big.
+results/
+*.mp4
