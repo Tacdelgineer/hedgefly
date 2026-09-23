@@ -414,6 +414,8 @@ function installFlies(pen){
 /* =====================================================================
    LETTERING — a stencil alphabet drawn through the same wobbly pen
    ===================================================================== */
+/* Digits must survive a small chart label: 0 carries a slash and 8 is two loops pinched at
+   the waist, so neither can be read as the other. */
 const GLYPHS={
  A:'062046|1434', B:'0006|003041423303|033344453606', C:'4130100105163645',
  D:'0006|003041453606', E:'40000646|0333', F:'400006|0333', G:'41301001051636454424',
@@ -424,7 +426,7 @@ const GLYPHS={
  W:'0016233640', X:'0046|4006', Y:'0023|4023|2326', Z:'00400646',
  0:'103041453616050110|4006', 1:'112026|1636', 2:'01103041420646',
  3:'0040234445361605', 4:'36300444', 5:'400003334445361605',
- 6:'40100105163645443303', 7:'004026', 8:'103041453616050110|0333',
+ 6:'40100105163645443303', 7:'004026', 8:'103041423313020110|133344453616050413',
  9:'4313030201103041453616', '$':'413010010213334445361605|2027', '%':'0010|4006|3646',
  '-':'1343', '+':'1343|2125', '.':'2625', ',':'2635', ':':'2221|2524', '/':'4006',
  '(':'30121436', ')':'10323416', '*':'2024|0422|4022', '·':'2323', "'":'2021', '!':'2023|2626', '?':'011030414223|2626',
@@ -804,15 +806,20 @@ room({id:'vault',col:3,row:0,w:7,d:7,h:3.2,
     const fin=RUN&&RUN.finale,open=fin?OPEN:0;
     if(open>0){
       // behind the door: the finale's scoreboard, every trader's final equity with fees
+      pen.glow(3.5,.4,.02,1.6,'amber',.25*open);    // the light on the floor first, so it cannot wash out the board
       pen.shape(pen.wallQuad('i',1.75,.3,3.5,2.25,.1),['paper',0],{w:.8,line:'amber',lineTone:.5});
-      pen.glow(3.5,.4,.02,1.6,'amber',.25*open);
       const traders=Object.entries(fin.passes.with_fees.traders).sort((a,b)=>b[1].final_equity-a[1].final_equity).slice(0,6);
       const vals=traders.map(([,r])=>r.final_equity).concat(1000),lo=Math.min(...vals)*.99,hi=Math.max(...vals)*1.005;
       const inkOf=n=>n.startsWith('real')?'cyan':n.startsWith('scrambled')?'magenta':n==='llm'?'ghost':'slate';
-      traders.forEach(([n,r],k)=>{const z=2.25-k*.33,ink=inkOf(n),len=2.9*(r.final_equity-lo)/(hi-lo);
-        pen.tint(pen.wallQuad('i',1.95,z-.2,Math.max(.05,len*open),.16,.12),ink,.75);
-        text(pen,n.replace(/_champions/,'').replace(/_/g,' '),pen.wallQuad('i',1.95,z+.1,.01,.01,.13)[0],6,{wall:'i',ink,w:.7});
-        text(pen,money(r.final_equity),pen.wallQuad('i',1.95+Math.max(.05,len*open)+.08,z-.02,.01,.01,.13)[0],6.5,{wall:'i',ink,w:.8})});
+      /* A row is its name and its money on one line, the bar under them. Nothing is placed at the
+         end of a bar, so a short bar cannot push a number into a name and a long one cannot push
+         it off the board. Text on the wall runs TW/2 px across per unit, TZ px tall per unit. */
+      const L=1.95,R=5.05,across=px=>px*Math.cos(.4636)/(TW/2);
+      traders.forEach(([n,r],k)=>{const top=2.46-k*.36,ink=inkOf(n),len=(R-L)*(r.final_equity-lo)/(hi-lo);
+        const v=money(r.final_equity);
+        text(pen,n.replace(/_champions/,'').replace(/_/g,' '),pen.wallQuad('i',L,top,.01,.01,.13)[0],6,{wall:'i',ink,w:.7});
+        text(pen,v,pen.wallQuad('i',R-across(textWidth(v,6.5)),top,.01,.01,.13)[0],6.5,{wall:'i',ink,w:.8});
+        pen.tint(pen.wallQuad('i',L,top-.34,Math.max(.05,len*open),.1,.12),ink,.75)});
     }
     // the door swings out to the left as it opens
     const dx=-open*120,sq=1-open*.72;
@@ -823,12 +830,13 @@ room({id:'vault',col:3,row:0,w:7,d:7,h:3.2,
       pen.line([[cx+dx+Math.cos(a)*7*sq,cy+Math.sin(a)*7],[cx+dx+Math.cos(a)*31*sq,cy+Math.sin(a)*31]],'amber',2.4,{tone:.85});
       pen.dot(cx+dx+Math.cos(a)*31*sq,cy+Math.sin(a)*31,3,'amber',.9)}
     pen.halo(cx+dx,cy,14,'amber',.8);pen.shape(ellipse2(cx+dx,cy,8*sq,8,0,14),['amber',.9],{line:'amber'});
-    textCentred(pen,open>.5?'OPEN':'LOCKED',[cx,cy+54],22,{ink:'amber',w:1.8});
-    textCentred(pen,'LAST 6 MONTHS',[cx,cy-84],13,{ink:'amber',tone:.95,w:1.3});
+    textCentred(pen,open>.5?'OPEN':'LOCKED',[cx,cy+54+open*14],22,{ink:'amber',w:1.8});   // open, it drops clear of the board
+    const lift=open*56;                             // open, the title rises clear of the board and the wall's top edge
+    textCentred(pen,'LAST 6 MONTHS',[cx,cy-84-lift],13,{ink:'amber',tone:.95,w:1.3});
     const lk=RUN&&RUN.locked;                       // sealed size before the finale, traded count after
     const barsLine=fin?fin.bars.toLocaleString('en-US')+' BARS TRADED'
                  :lk?lk.rows.toLocaleString('en-US')+' BARS SEALED':'SEALED';
-    textCentred(pen,barsLine,[cx,cy-66],11,{ink:'amber',tone:.7,w:1.1});
+    textCentred(pen,barsLine,[cx,cy-66-lift],11,{ink:'amber',tone:.7,w:1.1});
     for(let k=0;k<9;k++)pen.line([p(1.2+k*.5,2.9,.01),p(1.5+k*.5,3.4,.01)],'amber',3,{tone:.45,amp:.2});
     pen.line([p(1.3,3.8,.02),p(5.7,3.8,.02)],'ghost',2.2,{tone:.5,amp:.8});
     for(let k=0;k<9;k++)pen.dot(...p(1.4+k*.52,3.8,.05),2,'ghost',.6);
@@ -838,7 +846,7 @@ room({id:'vault',col:3,row:0,w:7,d:7,h:3.2,
     for(const [i,j,h] of[[.6,4.4,.5],[.6,5.1,.35],[1.35,4.5,.4]])pen.box(i,j,0,.7,.6,h,{ink:'slate',tone:.35});
     pen.fly(4.8,5.3,0,{t,pose:'stand',ink:'slate',scale:1.35,facing:-1,phase:.8});
     textCentred(pen,fin?(fin.rehearsal?'OPENED FOR A REHEARSAL':'OPENED FOR THE FINALE'):'OPENS IN THE FINALE',p(4.6,7.4,.02),11,{ink:'amber',tone:.75,w:1.1});
-    pen.lamp(6.3,1.1,{t});
+    pen.lamp(6.6,.8,{t});                           // right of the board, never in front of its numbers
   }});
 
 /* =====================  THE TRADING FLOOR  =====================
@@ -912,13 +920,16 @@ room({id:'hero',col:2,row:1,w:7,d:7,h:3.2,
     const board=pen.wallQuad('i',1,1.05,4.9,1.8,.04);pen.shape(board,['slate',.1],{w:1.2});
     if(RUN){const series=RUN.frames.map(q=>q.heroes.real.equity),n=series.length;
       const lo=Math.min(...series,RUN.start_cash),hi=Math.max(...series,RUN.start_cash),span=Math.max(hi-lo,1e-9);
-      const at=(k,v)=>pen.wallQuad('i',1.3+(n<2?0:4.3*k/(n-1)),1.4+1.2*(v-lo)/span,.01,.01,.07)[0];
+      const at=(k,v)=>pen.wallQuad('i',1.3+(n<2?0:4.3*k/(n-1)),1.82+.82*(v-lo)/span,.01,.01,.07)[0];
       pen.line([at(0,RUN.start_cash),at(n-1,RUN.start_cash)],'ghost',.7,{tone:.35,dash:[4,4],amp:.2});
       const P=series.slice(0,GEN+1).map((v,k)=>at(k,v));
       if(P.length>1)pen.line(P,'gold',1.6,{tone:.95,amp:.25});
       if(P.length){const [x,y]=P[P.length-1];pen.halo(x,y,8,'gold',.9);pen.dot(x,y,2.4,'gold',1)}
-      text(pen,'HERO EQUITY',pen.wallQuad('i',1.3,1.3,.01,.01,.1)[0],8,{wall:'i',tone:.6});
-      text(pen,money(RUN.start_cash),pen.wallQuad('i',5.1,1.26,.01,.01,.1)[0],7,{wall:'i',tone:.45})}
+      // the title hangs under the board and the start line's label is right-aligned inside it,
+      // so neither can cross the board's edge (text on the wall runs TW/2 px across per unit)
+      text(pen,'HERO EQUITY',pen.wallQuad('i',1.1,.96,.01,.01,.06)[0],8,{wall:'i',tone:.6});
+      const sc=money(RUN.start_cash);
+      text(pen,sc,pen.wallQuad('i',5.75-textWidth(sc,7)*Math.cos(.4636)/(TW/2),1.6,.01,.01,.1)[0],7,{wall:'i',tone:.6})}
     // the lineage as portraits: oldest on the left, the hero last and lit
     if(h){const chain=[...h.ancestors,h.id].slice(-4);
       chain.forEach((id,k)=>{const last=k===chain.length-1,u=.55+(chain.length-1-k)*1.2;
@@ -937,11 +948,15 @@ room({id:'hero',col:2,row:1,w:7,d:7,h:3.2,
     pen.books(4.4,4.1,.76,2);
     if(h){pen.fly(3.3,4.6,.76,{t,pose:'sit',ink:'gold',scale:1.55,phase:.6,glowStrength:1.6,noShadow:true});
       const [sx,sy]=p(5.3,2.2,.02);
-      pen.shape([[sx-6,sy],[sx+98,sy],[sx+98,sy-58],[sx-6,sy-58]],['slate',.14],{w:1.3,line:'gold'});
+      // the card is sized from its own lines, so the id and the money always sit inside it
+      const born=(h.origin==='newcomer'?'NEWCOMER':h.origin==='founder'?'FOUNDER':'CHILD')+' · GEN '+h.born;
+      const alive=h.generations_lived+(h.generations_lived===1?' GEN':' GENS')+' ALIVE',cash=money(h.equity);
+      const cw=Math.max(textWidth(h.id,11),textWidth(born,7.5),textWidth(alive,7.5),textWidth(cash,13))+8;
+      pen.shape([[sx-6,sy+16],[sx+cw,sy+16],[sx+cw,sy-58],[sx-6,sy-58]],['slate',.14],{w:1.3,line:'gold'});
       text(pen,h.id,[sx+2,sy-51],11,{ink:'gold',w:1.1});
-      text(pen,(h.origin==='newcomer'?'NEWCOMER':h.origin==='founder'?'FOUNDER':'CHILD')+' · GEN '+h.born,[sx+2,sy-35],7.5,{tone:.7});
-      text(pen,h.generations_lived+(h.generations_lived===1?' GEN':' GENS')+' ALIVE',[sx+2,sy-23],7.5,{tone:.7});
-      text(pen,money(h.equity),[sx+2,sy-4],13,{ink:'gold',w:1.3})}
+      text(pen,born,[sx+2,sy-35],7.5,{tone:.7});
+      text(pen,alive,[sx+2,sy-23],7.5,{tone:.7});
+      text(pen,cash,[sx+2,sy-4],13,{ink:'gold',w:1.3})}
     pen.chair(2.9,5.3,{back:'i',ink:'slate',tone:.35});
   }});
 
