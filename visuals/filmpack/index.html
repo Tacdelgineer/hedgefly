@@ -57,8 +57,7 @@ function lineChart(pen,box,series,o={}){
     pen.line([[box.x,y],[box.x+box.w,y]],'slate',1.5*u,{tone:.35,amp:0});
     text(pen,o.yFmt?o.yFmt(v):v.toFixed(3),[box.x-12*u-textWidth(o.yFmt?o.yFmt(v):v.toFixed(3),22*u),y-10*u],22*u,{tone:.55,w:1.6*u})}
   if(o.zero&&lo<0&&hi>0)pen.line([[box.x,Y(0)],[box.x+box.w,Y(0)]],'ghost',2*u,{tone:.45,dash:[10*u,10*u],amp:0});
-  for(const r of o.refs||[]){pen.line([[box.x,Y(r.y)],[box.x+box.w,Y(r.y)]],r.ink||'ghost',2*u,{tone:.4,dash:[6*u,8*u],amp:0});
-    text(pen,r.label,[box.x+box.w-textWidth(r.label,20*u)-6*u,Y(r.y)-30*u],20*u,{tone:.6,w:1.5*u})}
+  for(const r of o.refs||[])pen.line([[box.x,Y(r.y)],[box.x+box.w,Y(r.y)]],r.ink||'ghost',2*u,{tone:.4,dash:[6*u,8*u],amp:0});
   const step=Math.max(1,Math.round((x1-x0)/10));
   for(let v=x0;v<=x1;v+=step)text(pen,String(v),[X(v)-8*u,box.y+box.h+16*u],22*u,{tone:.55,w:1.6*u});
   if(o.xLabel)text(pen,o.xLabel,[box.x+box.w-textWidth(o.xLabel,24*u),box.y+box.h+56*u],24*u,{tone:.6,w:1.8*u});
@@ -66,10 +65,28 @@ function lineChart(pen,box,series,o={}){
     if(P.length>1)pen.line(P,s.ink,(s.width||5)*u,{tone:s.tone??1,amp:.15,dash:s.dash?s.dash.map(d=>d*u):undefined});
     if(s.dots!==false)for(const p of P)pen.dot(p[0],p[1],(s.width||5)*u*.9,s.ink,s.tone??1);
     const [lx,ly]=P[P.length-1];pen.halo(lx,ly,26*u,s.ink,.7)}
-  // legend
-  let ly=box.y+10*u;
-  for(const s of series){pen.line([[box.x+24*u,ly+14*u],[box.x+90*u,ly+14*u]],s.ink,(s.width||5)*u,{tone:s.tone??1,amp:0,dash:s.dash?s.dash.map(d=>d*u):undefined});
-    text(pen,s.name,[box.x+110*u,ly],26*u,{ink:s.ink,w:2*u});ly+=46*u}
+  // Labels go on last, each over a patch of knocked-out paper, so no data line can run through
+  // their letters: the reference labels, then the legend.
+  const patch=(x,y,w,h)=>pen.knock([[x,y],[x+w,y],[x+w,y+h],[x,y+h]],.88),labels=[];
+  for(const r of o.refs||[]){const w=textWidth(r.label,20*u),x=box.x+box.w-w-6*u,y=Y(r.y)-30*u;
+    labels.push([x-8*u,y-6*u,w+10*u,32*u]);patch(...labels.at(-1));text(pen,r.label,[x,y],20*u,{tone:.6,w:1.5*u})}
+  // The legend takes whichever corner of the plot the lines and labels leave emptiest, so the
+  // patch under it hides as little of the data as it can.
+  const lw=110*u+Math.max(...series.map(s=>textWidth(s.name,26*u))),lh=series.length*46*u+6*u;
+  const drawn=series.map(s=>s.points.map(([x,y])=>[X(x),Y(y)]));
+  const hits=(gx,gy)=>{let n=0;
+    for(const P of drawn)for(let k=0;k<P.length;k++)for(let q=0;q<(k?8:1);q++){
+      const x=k?P[k-1][0]+(P[k][0]-P[k-1][0])*q/8:P[0][0],y=k?P[k-1][1]+(P[k][1]-P[k-1][1])*q/8:P[0][1];
+      if(x>=gx&&x<=gx+lw&&y>=gy&&y<=gy+lh)n++}
+    for(const [x,y,w,h] of labels)if(x<gx+lw&&gx<x+w&&y<gy+lh&&gy<y+h)n+=1e4;
+    return n};
+  const corners=[[box.x+12*u,box.y+2*u],[box.x+box.w-lw-12*u,box.y+2*u],
+                 [box.x+12*u,box.y+box.h-lh-8*u],[box.x+box.w-lw-12*u,box.y+box.h-lh-8*u]];
+  const [gx,gy]=corners.reduce((a,c)=>hits(...c)<hits(...a)?c:a);
+  patch(gx,gy,lw,lh);
+  let ly=gy+8*u;
+  for(const s of series){pen.line([[gx+12*u,ly+14*u],[gx+78*u,ly+14*u]],s.ink,(s.width||5)*u,{tone:s.tone??1,amp:0,dash:s.dash?s.dash.map(d=>d*u):undefined});
+    text(pen,s.name,[gx+98*u,ly],26*u,{ink:s.ink,w:2*u});ly+=46*u}
 }
 
 const CHARTS={
