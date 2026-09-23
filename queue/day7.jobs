@@ -8,7 +8,8 @@ finale_flies gpu uv run python -u finale_flies.py --run runs/day6_full
 
 # b. The finale's model: qwen3.6:35b-a3b, asked hourly with fees; the fee-free pass replays its
 #    decisions. Afterwards the model is unloaded from Ollama so it holds no GPU memory overnight.
-finale_llm gpu uv run python -u finale_llm.py --run runs/day6_full --llm-model qwen3.6:35b-a3b; rc=$?; curl -s -m 30 http://100.103.129.82:11434/api/generate -d '{"model":"qwen3.6:35b-a3b","keep_alive":0}' >/dev/null; exit $rc
+#    The endpoint comes from HEDGEFLY_LLM_URL (default http://localhost:11434/v1), as in story/llm.py.
+finale_llm gpu uv run python -u finale_llm.py --run runs/day6_full --llm-model qwen3.6:35b-a3b; rc=$?; u="${HEDGEFLY_LLM_URL:-http://localhost:11434/v1}"; curl -s -m 30 "${u%/v1}/api/generate" -d '{"model":"qwen3.6:35b-a3b","keep_alive":0}' >/dev/null; exit $rc
 
 # c. Both halves on one chart: runs/day6_full/finale.json
 finale_merge cpu uv run python finale_merge.py --run runs/day6_full
@@ -19,5 +20,6 @@ validation_run gpu uv run python -u -m scripts.run_evolution --generations 12 --
 
 # e. Once all of that has landed: re-export the validation run and the finale into the visuals,
 #    redraw the film-pack charts, rebuild the one-file HQ, and commit + push them on the visuals
-#    branch. CPU only, and last, so it can never hold up the jobs above.
-visuals_refresh cpu bash /home/xxfactionsxx/hedgefly/hedgefly-visuals/scripts/refresh_visuals.sh
+#    branch. CPU only, and last, so it can never hold up the jobs above. Set HEDGEFLY_VISUALS_DIR
+#    to the checkout of the visuals branch (default: this repo).
+visuals_refresh cpu bash "${HEDGEFLY_VISUALS_DIR:-.}/scripts/refresh_visuals.sh"

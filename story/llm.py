@@ -25,9 +25,9 @@ import requests
 from market import BUY, HOLD, SELL, Wallet, trade_window
 from market.chart import WINDOW
 
-# Ollama on this Spark listens on its Tailscale address, not on localhost. Override with the
-# environment variable when the model is served elsewhere.
-LOCAL_URL = os.environ.get("HEDGEFLY_LLM_URL", "http://100.103.129.82:11434/v1")
+# Ollama's default local address. When the model is served elsewhere (on the Spark, Ollama listens
+# on a private network address, not on localhost), set HEDGEFLY_LLM_URL to that endpoint.
+LOCAL_URL = os.environ.get("HEDGEFLY_LLM_URL", "http://localhost:11434/v1")
 LOCAL_MODEL = os.environ.get("HEDGEFLY_LLM_MODEL", "Qwen3.8-27B")
 TIMEOUT = 120
 SCALE = 100                 # the window's low is 0 and its high is 100

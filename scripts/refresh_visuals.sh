@@ -7,10 +7,14 @@
 # Uses the newest finished run for the HQ (the validation run once it exists, day6_full until
 # then) and day6_full's finale if it has landed. Everything is exported from the logs, so every
 # number on screen still comes from runs/ (PLAN.md rule 8). CPU only.
+#
+# Environment (both optional):
+#   HEDGEFLY_MAIN   the checkout that holds .venv, data/ and runs/ (default: this checkout)
+#   HEDGEFLY_HOST   the host name printed in the scp hint for the one-file HQ (default: hostname)
 set -euo pipefail
 
 W="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MAIN=/home/xxfactionsxx/hedgefly/hedgefly
+MAIN="${HEDGEFLY_MAIN:-$W}"
 PY="$MAIN/.venv/bin/python"
 cd "$W"
 [[ -e data && -e runs ]] || { ln -sfn "$MAIN/data" data; ln -sfn "$MAIN/runs" runs; }
@@ -22,7 +26,7 @@ echo "refreshing visuals from $RUN (finale from $FINALE)"
 
 "$PY" -m scripts.export_for_visuals --run "$RUN" --finale "$FINALE"
 if [[ -f scripts/filmpack.mjs ]]; then node scripts/filmpack.mjs --out results/filmpack; fi
-node scripts/build_standalone.mjs --host 100.103.129.82
+node scripts/build_standalone.mjs ${HEDGEFLY_HOST:+--host "$HEDGEFLY_HOST"}
 
 git add visuals/hq/runs.json visuals/dist/hedgefly.html
 if git diff --cached --quiet; then
