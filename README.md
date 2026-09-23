@@ -1,3 +1,5 @@
+<a href="[paste video URL]"><img src="docs/images/banner.jpg" alt="Real vs fake: fly brains x Bitcoin. Watch the video" width="100%"></a>
+
 # Hedgefly: Natural Selection Capital
 
 100 frozen fruit-fly brains, wired exactly like a real fly's, evolve to trade Bitcoin against a
@@ -8,7 +10,7 @@ tribe whose wiring was scrambled, then face six months of prices none of them ha
 **Walk through it yourself:** <https://tacdelgineer.github.io/hedgefly/> (drag to look around,
 number keys jump between rooms, I for the key list and credits)
 
-**Watch the video:** YOUTUBE_LINK
+**Watch the video:** [paste video URL]
 
 The brains come from the MaleCNS v1.0 connectome and never change. Only the genome that connects
 market data to the brain, and brain output to trades, evolves. The run is told as a building of
@@ -33,6 +35,23 @@ isometric rooms drawn entirely in code, and every number on its walls is read fr
 <tr>
 <td><img src="docs/screenshots/overfit-room.jpg" alt="The Overfit Room"><br><b>The Overfit Room.</b> The days the flies were picked on, against a surprise exam they never saw.</td>
 <td><img src="docs/screenshots/vault-open.jpg" alt="The Vault, open"><br><b>The Vault, open.</b> The six locked months, and every trader's final score.</td>
+</tr>
+</table>
+
+## From the video
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/video-flys-eye-view.jpg" alt="The fly's-eye view"><br><b>The fly's-eye view.</b> The price chart landing on the fly's compound eye.</td>
+<td width="50%"><img src="docs/images/video-nursery.jpg" alt="The Nursery"><br><b>The Nursery.</b> The survivors' children and a few newcomers fill the empty seats.</td>
+</tr>
+<tr>
+<td><img src="docs/images/video-tree-of-life.jpg" alt="The Tree of Life"><br><b>The Tree of Life.</b> Every family line in both tribes, with the champion's path lit up.</td>
+<td><img src="docs/images/video-replay-room.jpg" alt="The Replay Room"><br><b>The Replay Room.</b> The two champions replay one day, decision by decision.</td>
+</tr>
+<tr>
+<td><img src="docs/images/video-models-office.jpg" alt="The Model's Office"><br><b>The Model's Office.</b> The local AI model is shown the chart every hour and answers buy, sell or hold.</td>
+<td><img src="docs/images/video-boardroom.jpg" alt="The Boardroom"><br><b>The Boardroom.</b> Every trader's final score from the vault, side by side.</td>
 </tr>
 </table>
 
@@ -72,6 +91,36 @@ five-minute bars), once, at 5 basis points a side:
 - With fees, 2 of the 10 real champions beat just holding Bitcoin. With the fees switched off,
   all 10 did.
 - Not financial advice. It's an experiment.
+
+### The charts
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/chart-fitness.png" alt="Fitness by generation"><br><b>Fitness by generation.</b> The median and best fly of each tribe on the training days (<code>runs/day7_validation</code>).</td>
+<td width="50%"><img src="docs/images/chart-trades.png" alt="Trades per day"><br><b>Trades per day.</b> The typical fly of both tribes learns to trade less (<code>runs/day7_validation</code>).</td>
+</tr>
+<tr>
+<td><img src="docs/images/chart-overfit.png" alt="Training vs validation"><br><b>Training vs validation.</b> Days the flies were picked on (solid) against days they never saw (dashed).</td>
+<td><img src="docs/images/chart-finale-curves.png" alt="Six locked months"><br><b>Six locked months.</b> Every trader's money through the finale, with fees (<code>runs/day6_full</code>).</td>
+</tr>
+</table>
+
+### The stat cards
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/stat-s1-real-vs-buy-and-hold.jpg" alt="Real champions against just holding"><br><b>Real champions vs just holding.</b> With fees, $952 against $1,027.</td>
+<td width="50%"><img src="docs/images/stat-s2-real-vs-scrambled.jpg" alt="Real against scrambled wiring"><br><b>Real vs scrambled wiring.</b> $952 against $437 for the scrambled champions.</td>
+</tr>
+<tr>
+<td><img src="docs/images/stat-s3-trades.jpg" alt="Trades per champion"><br><b>Trades per champion.</b> About 450 for the real wiring and 1,788 for the scrambled.</td>
+<td><img src="docs/images/stat-s4-momentum-and-random.jpg" alt="The momentum and random robots"><br><b>The robots.</b> Momentum ended with $38 and random with $4.43.</td>
+</tr>
+<tr>
+<td><img src="docs/images/stat-s5-local-ai.jpg" alt="The local AI model"><br><b>The local AI model.</b> $871, and most of its answers were hold.</td>
+<td><img src="docs/images/stat-s6-no-fees.jpg" alt="Fees switched off"><br><b>Fees switched off.</b> $1,192 on average, and all 10 real champions beat holding.</td>
+</tr>
+</table>
 
 ## How to run it
 
