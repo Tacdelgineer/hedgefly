@@ -1,0 +1,17 @@
+{
+ "headline": "Generation 4: Real Connectomes Lead",
+ "narration": "The real tribe's best fly, real-f00282, holds final_equity of 1025.18 with fitness 0.024869, while the scrambled tribe's top performer, scrambled-f00355, reaches 1022.69 with fitness 0.022441. The real tribe executed 2399 total trades compared to the scrambled tribe's 5245.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Gen 4 Results",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 4,
+ "attempts": 1
+}

@@ -1,0 +1,19 @@
+{
+ "headline": "Generation 7: Real flies lead",
+ "narration": "The real tribe's best fitness of 0.028347 yields a final equity of 1028.75, while the scrambled tribe's best reaches only 0.025347 and 1025.67. The real flies executed 2652 total trades compared to the scrambled tribe's 4572.",
+ "poster": {
+  "title": "Connectome vs Chaos",
+  "subtitle": "Generation 7 Results",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.fitness.best",
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.fitness.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 7,
+ "attempts": 1
+}

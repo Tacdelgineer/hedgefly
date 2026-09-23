@@ -1,100 +1,84 @@
-# Fly Terminal — visual style
+# Neon riso — visual style
 
-The second look for Hedgefly, and the one the video leads with. The risograph HQ
-(`visuals/hq/`) stays as B-roll; nothing here borrows from it. That world was warm paper and
-printed ink. This one is a screen in a dark room at 3am: the trading terminal the flies are
-plugged into.
+The look of Hedgefly's main world, **Natural Selection Capital HQ** (`visuals/hq2/`), its poster
+cards (`visuals/posters/`) and everything cut from them. It keeps what made the riso rooms work
+— isometric cutaway dioramas, halftone grain, hand-wobbled lines, plates that do not quite line
+up — and prints them in light instead of ink: neon screen-printed onto black paper.
 
-Original design. Do not copy the riso reference, and do not imitate any existing terminal
-product's branding.
+Original design. It borrows the *technique* of risograph printing, not anyone's artwork; the
+riso-rooms reference is a way of drawing, not a picture to copy. The earlier warm-paper HQ
+(`visuals/hq/`, branch `session-a/day4`) and the fly terminal (`visuals/terminal/`) stay in the
+repo: the first as B-roll, the second as an optional inset panel.
 
 ## The idea
 
-A monitor showing a live experiment. The chart is the world; the flies fly over it. Everything
-is emitted light on near-black, slightly out of focus, with the faint horizontal banding of a
-screen that has been on too long. The reader should feel like they are watching an instrument,
-not a dashboard: no cards, no rounded panels, no drop shadows, no product chrome.
+A risograph run on black stock with fluorescent drums. Every surface is a halftone of light:
+walls are a sparse dot screen in a dim ink, floors a denser one, and anything that matters
+glows. Where two plates overlap they ADD, the way light does, instead of darkening the way ink
+does — so overprints brighten toward white rather than muddying toward black.
 
-## Palette
-
-Colour carries one meaning only: **who is this**. Nothing is coloured for decoration.
+## Paper and inks
 
 | token | value | what it means |
 |---|---|---|
-| `--void` | `#06080c` | the background, near-black with a blue cast |
-| `--panel` | `#0b0f16` | a pane's fill, barely lighter than the void |
-| `--grid` | `#16202e` | rules, axes, borders |
-| `--real` | `#2ff5c8` | **the real tribe.** Cyan-green, the brightest thing on screen |
-| `--scrambled` | `#ff3d7f` | **the scrambled tribe.** Magenta-red, equally saturated |
-| `--hero` | `#ffd23f` | the hero lineage alone: its trail, its tag, its line |
-| `--up` / `--down` | `#1f9e6e` / `#b3335c` | candle bodies, deliberately duller than the tribes |
-| `--ink` | `#c9d6e6` | body text |
-| `--dim` | `#5a6b80` | labels, axis numbers, anything secondary |
-| `--locked` | `#ff6a1f` | the sealed pane, and nothing else |
+| paper | `#07070b` | near-black stock with a faint violet cast; never pure black |
+| `cyan` | `#27f2d2` | **the real tribe**, and nothing else |
+| `magenta` | `#ff3d9a` | **the scrambled tribe**, and nothing else |
+| `gold` | `#ffc93c` | **the hero lineage** alone |
+| `amber` | `#ff7a1a` | **the locked test set** alone: the vault, its seals, its warnings |
+| `slate` | `#5b6cff` at low tone | architecture: walls, floors, furniture, the building itself |
+| `ghost` | `#d8dcff` at low tone | linework and small type on dark surfaces; and the language model in the Model's Office, which is neither tribe, hero nor vault |
 
-The two tribe colours must stay equally bright and equally saturated. If one reads as the
-"good" colour the whole comparison is rigged, and that is the one claim the piece is making.
-Check them in greyscale: they should be indistinguishable in value.
+**Colour means who, never how good.** Cyan and magenta must be equally bright and equally
+saturated — check them in greyscale; they should read as the same value. If one tribe's colour
+looks like the winner's, the comparison the whole film makes is rigged before a single fly has
+traded. The same goes for the plates: a tribe is never printed at a higher tone than the other.
 
-## Type
+Anything that is neither a tribe, the hero, nor the vault is `slate` or `ghost`. A new colour
+needs a new meaning, written into this table first.
 
-Monospace throughout: `ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace`.
-Uppercase for labels with `letter-spacing: .12em`; sentence case for nothing. Numbers are
-tabular (`font-variant-numeric: tabular-nums`) so a changing figure does not jitter. Sizes:
-11px labels, 13px body, 18px scoreboard figures, 34px the generation counter.
+**How good is tone, not hue.** The Barcode Wall paints one cell per fly per generation and has
+to show fitness, which is exactly the thing colour is not allowed to carry. It carries it in the
+*density of the ink* instead: a real fly's cell is cyan and a scrambled fly's is magenta,
+whatever either of them earned, and the halftone gets denser as fitness rises. Both tribes are
+scaled against one shared range taken over the whole run, so a dark band means the same thing in
+both blocks and the two still read as the same value in greyscale. Any future room that needs to
+show a quantity does it the same way: tone within the ink that says *who*, never a hue that says
+*how good*.
+
+**A point of view may not change a reading.** The blueprint plan, the dollhouse section and the
+night-to-day light move the camera, take the furniture away or wash the whole frame - and the
+wash is one flat pass over everything, identical for every ink, so a tribe can never come out of
+dawn brighter than the other. None of the three may touch a number, and none of them does.
 
 ## The four rules of the look
 
-1. **Light comes from the mark itself.** Every bright element carries a glow of its own colour,
-   drawn as a soft pass under a sharp pass — canvas `shadowBlur` with `shadowColor` set to the
-   element's colour, then the same path drawn again crisp. Never a CSS `box-shadow`, never a
-   glow in a colour the element is not.
-2. **Scanlines and bloom sit over everything.** One 2px horizontal banding pattern at about 6%
-   opacity across the whole canvas, plus a slow vertical sweep every ~9s. Applied once, last,
-   over the finished frame, never per element.
-3. **Nothing is pure white and nothing is pure black.** Highlights top out at `--ink`;
-   the darkest value is `--void`. A pure `#fff` or `#000` anywhere is a bug.
-4. **Motion is small, continuous and never eased.** Flies beat their wings every frame, the
-   chart does not animate at all, and panels update on the generation tick. No transitions, no
-   bounce, no easing curves — this is an instrument reading out, not an interface animating.
+1. **Every fill is a halftone of light.** Knock out to paper (black), then screen an ink on top
+   as a dot pattern at a tone 0–1, composited additively (`screen`/`lighter`). No flat fills.
+2. **Plates don't line up.** Each ink sits ~1px off register and at its own screen angle; the
+   moiré is part of the print.
+3. **Lines are drawn by hand.** Every path is resampled and wobbled with noise; outlines are
+   `ghost` or the object's ink, 1.0–1.6 wide.
+4. **It boils, and it glows.** The frame redraws at 12 fps with the wobble reseeded every 4
+   frames, and anything alive — a fly, a screen, a lamp — carries a soft halo of its own ink.
 
-## Layout
+## Characters are flies
 
-A fixed three-column grid, no scrolling, 100vh:
+Every character in every room is a **fly with wings**: the scientist in the Lab, the traders on
+the floor, the guard at the vault. Never a person, never a human silhouette. A fly character is
+an isometric body, a head with two big compound eyes, six short legs and two wings that flicker
+every frame at their own phase. Tribe flies are their tribe's ink; staff flies are `slate`
+with `ghost` eyes, so they never compete with the tribes for colour.
 
-```
-┌──────────────────────────────────────────────┬────────────────┐
-│  GEN 23/39        [play] [=========|-------] │  SCOREBOARD    │
-├──────────────────────────────────────────────┤  real / scram  │
-│                                              │  momentum      │
-│   CANDLES + 200 FLIES + hero trail           │  random        │
-│   (the world)                                │  buy & hold    │
-│                                              ├────────────────┤
-│                                              │  BRAIN MESH    │
-├──────────────────────────────────────────────┤────────────────┤
-│  THE PILE — dead flies, accumulating         │  LOCKED  ▓▓▓▓  │
-└──────────────────────────────────────────────┴────────────────┘
-```
+## Type
 
-`?vertical` switches to 9:16 for Shorts: the world keeps the top ~62% of the height, the
-scoreboard becomes a single row under it, and the mesh and locked pane sit side by side at the
-bottom. Same code, same data, different arrangement — never a second implementation.
-
-## The flies
-
-A fly is drawn, not a dot: a 3px body, a head, and two wings redrawn every frame at a
-per-fly phase so the swarm shimmers rather than pulsing in unison. Alive flies are their
-tribe's colour at an alpha set by how well they are doing. A fly that goes broke stops flying,
-falls, and lands in **the pile** along the bottom, where it stays for the rest of the run —
-the pile only ever grows, and it is the piece's memory of everything selection has cost.
-
-The hero fly is `--hero`, larger, with a trail of its last ~40 positions fading to nothing, a
-name tag, and its own equity line drawn across the world pane.
+Hand-lettered: a stencil alphabet drawn as polylines through the same wobbly pen as everything
+else, so signs boil with the walls. On the posters the headline is set huge — it is the
+image — and the three stats are set big and plain beneath it. No web fonts in the world itself.
 
 ## What this style refuses
 
-- No gradients except the glow itself. No blur filters on text.
-- No colour that means nothing. A new colour needs a new meaning, in this table, first.
-- No easing, no spring physics, no transitions on any property.
-- No decorative "data" — every mark on screen is a number from `runs.json`
-  (`visuals/hq/data-contract.md`), which is PLAN.md rule 8.
+- No gradients except a lamp's or a screen's halo. No blur filters. No drop shadows.
+- No people. No colour that means nothing. No tribe colour used to mean "good".
+- No decorative numbers: every figure on screen or on a poster is read out of `runs.json`
+  (`visuals/hq/data-contract.md`), which comes from the logs — PLAN.md rule 8.

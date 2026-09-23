@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hedgefly film pack</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#07070b}canvas{display:block;width:100%;height:100%}</style>
+</head><body>
+<canvas id="chart" aria-label="A Hedgefly chart for the film"></canvas>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   FILM PACK — neon riso charts for the edit, one per ?chart=, sized to the window (4K when
+   scripts/filmpack.mjs renders them). Every plotted number is read out of runs.json (PLAN.md
+   rule 8); a chart whose data has not landed yet says so instead of drawing anything.
+
+     fitness        median and best fitness by generation, both tribes, competitors for scale
+     trades         median trades per day by generation, both tribes
+     overfit        training vs validation median fitness by generation, both tribes
+     finale         the finale scoreboard: every trader's final equity, with and without fees
+     finale_curves  the finale's equity curves over the locked six months
+   ===================================================================== */
+const qs=new URLSearchParams(location.search);
+const cv=document.getElementById('chart'),ctx=cv.getContext('2d',{alpha:false});
+const TRIBE_INK={real:'cyan',scrambled:'magenta'};
+
+function frameOf(W,H){
+  const dpr=1;cv.width=W;cv.height=H;ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,W,H);
+  return makePen(ctx,{ox:0,oy:0,boil:0});
+}
+function finish(pen,W,H,src){
+  const u=Math.min(W,H)/2160;
+  text(pen,src,[W*.045,H-70*u],18*u,{tone:.5,w:1.4*u});
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation='source-over';
+  document.body.dataset.ready='1';
+}
+function title(pen,W,H,big,small){
+  const u=Math.min(W,H)/2160;
+  text(pen,big,[W*.045,H*.07],92*u,{w:7*u,gap:.28,amp:.5});
+  if(small)text(pen,small,[W*.045,H*.07+130*u],30*u,{tone:.7,w:2.2*u});
+}
+function pending(pen,W,H,big,why){
+  title(pen,W,H,big,'pending');
+  const u=Math.min(W,H)/2160;
+  textCentred(pen,why,[W/2,H*.5],44*u,{tone:.6,w:3*u});
+}
+
+/* A line chart: series of [x, y] points on a shared scale, with optional flat reference lines. */
+function lineChart(pen,box,series,o={}){
+  const u=o.u||1,all=series.flatMap(s=>s.points.map(p=>p[1])).concat((o.refs||[]).map(r=>r.y));
+  let lo=Math.min(...all),hi=Math.max(...all);if(o.zero){lo=Math.min(lo,0);hi=Math.max(hi,0)}
+  const pad=(hi-lo)*.1||Math.abs(hi)*.1||1;lo-=pad;hi+=pad;
+  const xs=series.flatMap(s=>s.points.map(p=>p[0])),x0=Math.min(...xs),x1=Math.max(...xs,x0+1);
+  const X=v=>box.x+(v-x0)/(x1-x0)*box.w,Y=v=>box.y+box.h-(v-lo)/(hi-lo)*box.h;
+  for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4,y=Y(v);
+    pen.line([[box.x,y],[box.x+box.w,y]],'slate',1.5*u,{tone:.35,amp:0});
+    text(pen,o.yFmt?o.yFmt(v):v.toFixed(3),[box.x-12*u-textWidth(o.yFmt?o.yFmt(v):v.toFixed(3),22*u),y-10*u],22*u,{tone:.55,w:1.6*u})}
+  if(o.zero&&lo<0&&hi>0)pen.line([[box.x,Y(0)],[box.x+box.w,Y(0)]],'ghost',2*u,{tone:.45,dash:[10*u,10*u],amp:0});
+  for(const r of o.refs||[]){pen.line([[box.x,Y(r.y)],[box.x+box.w,Y(r.y)]],r.ink||'ghost',2*u,{tone:.4,dash:[6*u,8*u],amp:0});
+    text(pen,r.label,[box.x+box.w-textWidth(r.label,20*u)-6*u,Y(r.y)-30*u],20*u,{tone:.6,w:1.5*u})}
+  const step=Math.max(1,Math.round((x1-x0)/10));
+  for(let v=x0;v<=x1;v+=step)text(pen,String(v),[X(v)-8*u,box.y+box.h+16*u],22*u,{tone:.55,w:1.6*u});
+  if(o.xLabel)text(pen,o.xLabel,[box.x+box.w-textWidth(o.xLabel,24*u),box.y+box.h+56*u],24*u,{tone:.6,w:1.8*u});
+  for(const s of series){const P=s.points.map(([x,y])=>[X(x),Y(y)]);
+    if(P.length>1)pen.line(P,s.ink,(s.width||5)*u,{tone:s.tone??1,amp:.15,dash:s.dash?s.dash.map(d=>d*u):undefined});
+    if(s.dots!==false)for(const p of P)pen.dot(p[0],p[1],(s.width||5)*u*.9,s.ink,s.tone??1);
+    const [lx,ly]=P[P.length-1];pen.halo(lx,ly,26*u,s.ink,.7)}
+  // legend
+  let ly=box.y+10*u;
+  for(const s of series){pen.line([[box.x+24*u,ly+14*u],[box.x+90*u,ly+14*u]],s.ink,(s.width||5)*u,{tone:s.tone??1,amp:0,dash:s.dash?s.dash.map(d=>d*u):undefined});
+    text(pen,s.name,[box.x+110*u,ly],26*u,{ink:s.ink,w:2*u});ly+=46*u}
+}
+
+const CHARTS={
+  fitness(run,pen,W,H,u){
+    title(pen,W,H,'Fitness by generation','median and best fly of each tribe on the '+(run.windows.length)+' fixed training days · mean log return a day');
+    const series=[];
+    for(const t of run.tribes){
+      series.push({name:t+' best',ink:TRIBE_INK[t],width:3,tone:.6,dash:[14,10],points:run.frames.map(f=>[f.generation,f.tribes[t].fitness.best])});
+      series.push({name:t+' median',ink:TRIBE_INK[t],width:6,points:run.frames.map(f=>[f.generation,f.tribes[t].fitness.median])});
+    }
+    const refs=Object.entries(run.competitor_results||{}).map(([n,c])=>({y:c.fitness,label:n.replace(/_/g,' ')}));
+    lineChart(pen,{x:W*.1,y:H*.2,w:W*.84,h:H*.62},series,{u,zero:true,refs,xLabel:'generation',yFmt:v=>(v>=0?'+':'')+v.toFixed(3)});
+  },
+  trades(run,pen,W,H,u){
+    title(pen,W,H,'Trades per day','median fly of each tribe, fills per fixed day, by generation');
+    const series=run.tribes.map(t=>({name:t,ink:TRIBE_INK[t],width:6,points:run.frames.map(f=>[f.generation,f.tribes[t].trades.median_per_day])}));
+    lineChart(pen,{x:W*.1,y:H*.2,w:W*.84,h:H*.62},series,{u,xLabel:'generation',yFmt:v=>v.toFixed(1)});
+  },
+  overfit(run,pen,W,H,u){
+    const has=run.frames.some(f=>f.tribes.real.validation);
+    if(!has)return pending(pen,W,H,'Training vs validation','the validation run has not landed yet');
+    title(pen,W,H,'Training vs validation','median fitness a day: training days selected on, solid; validation days never selected on, dashed');
+    const series=[];
+    for(const t of run.tribes){
+      series.push({name:t+' training',ink:TRIBE_INK[t],width:6,points:run.frames.map(f=>[f.generation,f.tribes[t].fitness.median])});
+      series.push({name:t+' validation',ink:TRIBE_INK[t],width:4,tone:.8,dash:[16,10],points:run.frames.filter(f=>f.tribes[t].validation).map(f=>[f.generation,f.tribes[t].validation.fitness.median])});
+    }
+    lineChart(pen,{x:W*.1,y:H*.2,w:W*.84,h:H*.62},series,{u,zero:true,xLabel:'generation',yFmt:v=>(v>=0?'+':'')+v.toFixed(3)});
+  },
+  finale(run,pen,W,H,u){
+    const fin=run.finale;
+    if(!fin)return pending(pen,W,H,'The finale','the vault has not been opened yet');
+    title(pen,W,H,'The finale'+(fin.rehearsal?' (rehearsal)':''),`${fin.data} · ${fin.bars.toLocaleString('en-US')} bars · ${fin.first_time.slice(0,10)} to ${fin.last_time.slice(0,10)} · champions of ${fin.run} generation ${fin.generation}`);
+    const paid=fin.passes.with_fees,free=fin.passes.no_fees,hourly=fin.passes.hourly_with_fees,hourlyFree=fin.passes.hourly_no_fees;
+    const rows=[];
+    const inkOf=n=>n.startsWith('real')?'cyan':n.startsWith('scrambled')?'magenta':n==='llm'?'ghost':'slate';
+    for(const [n,r] of Object.entries(paid.traders))rows.push({name:n.replace(/_/g,' ')+(n==='llm'?', hourly':''),paid:r.final_equity,free:free&&free.traders[n]?.final_equity,ink:inkOf(n)});
+    if(hourly)for(const [n,r] of Object.entries(hourly.traders))rows.push({name:n.replace(/_/g,' ')+', hourly',paid:r.final_equity,free:hourlyFree&&hourlyFree.traders[n]?.final_equity,ink:inkOf(n)});
+    rows.sort((a,b)=>b.paid-a.paid);
+    const all=rows.flatMap(r=>[r.paid,r.free].filter(v=>v!=null)).concat(1000);
+    const lo=Math.min(...all)*.985,hi=Math.max(...all)*1.005,box={x:W*.3,y:H*.2,w:W*.46,h:H*.66};
+    const X=v=>box.x+(v-lo)/(hi-lo)*box.w,rh=box.h/rows.length;
+    pen.line([[X(1000),box.y-10*u],[X(1000),box.y+box.h]],'ghost',2*u,{tone:.5,dash:[10*u,10*u],amp:0});
+    text(pen,'$1,000',[X(1000)-50*u,box.y-50*u],22*u,{tone:.6,w:1.6*u});
+    rows.forEach((r,k)=>{const y=box.y+k*rh+rh*.18,h=rh*.56;
+      text(pen,r.name,[W*.045,y+h*.2],Math.min(34*u,h*.55),{ink:r.ink,w:2.2*u});
+      pen.tint([[X(lo),y],[X(r.paid),y],[X(r.paid),y+h],[X(lo),y+h]],r.ink,.55);
+      pen.line([[X(r.paid),y],[X(r.paid),y+h]],r.ink,4*u,{amp:0});
+      if(r.free!=null){pen.line([[X(r.free),y-4*u],[X(r.free),y+h+4*u]],'ghost',3*u,{tone:.8,amp:0});}
+      text(pen,money(r.paid)+(r.free!=null?'   no fees '+money(r.free):''),[box.x+box.w+40*u,y+h*.2],Math.min(30*u,h*.5),{ink:r.ink,w:2*u})});
+    text(pen,'bars: with fees  ·  white tick: the same decisions with no fees',[box.x,box.y+box.h+30*u],24*u,{tone:.6,w:1.8*u});
+  },
+  finale_curves(run,pen,W,H,u){
+    const fin=run.finale;
+    if(!fin)return pending(pen,W,H,'Six locked months','the vault has not been opened yet');
+    title(pen,W,H,'Six locked months'+(fin.rehearsal?' (rehearsal)':''),'equity through the finale, with fees; champions are the mean of their ten');
+    const inkOf=n=>n.startsWith('real')?'cyan':n.startsWith('scrambled')?'magenta':n==='llm'?'ghost':'slate';
+    const series=Object.entries(fin.passes.with_fees.traders).map(([n,r])=>({name:n.replace(/_/g,' '),ink:inkOf(n),
+      width:n.includes('champions')?6:3,tone:n.includes('champions')?1:.7,dots:false,points:r.curve.map((v,k)=>[k,v])}));
+    lineChart(pen,{x:W*.1,y:H*.2,w:W*.84,h:H*.62},series,{u,refs:[{y:1000,label:'$1,000'}],xLabel:'time through the six months',yFmt:v=>money(v)});
+  },
+};
+
+async function loadRun(){
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
+  const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+  if(!r.ok)throw new Error('runs.json: '+r.status);return r.json();
+}
+loadRun().then(run=>{
+  const W=innerWidth,H=innerHeight,u=Math.min(W,H)/2160,name=qs.get('chart')||'fitness';
+  if(!CHARTS[name])throw new Error('no chart '+name+'; try '+Object.keys(CHARTS).join(', '));
+  const pen=frameOf(W,H);CHARTS[name](run,pen,W,H,u);
+  finish(pen,W,H,(run.fake?'FAKE DATA · ':'')+'HEDGEFLY · FROM THE LOGS OF RUN '+run.run_id.toUpperCase()+(run.finale&&name.startsWith('finale')?' · FINALE FROM '+run.finale.run.toUpperCase():''));
+  document.title=`Hedgefly film pack · ${name}`;
+}).catch(e=>{console.error(e);document.body.textContent=String(e)});
+</script>
+</body></html>

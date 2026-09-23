@@ -9,7 +9,10 @@ import json
 import pandas as pd
 import pytest
 
-from scripts.export_for_visuals import candles_for, check, frame_of, generations, seats
+import scripts.export_for_visuals as exporter
+from scripts.export_for_visuals import (brain_block, candles_for, check, frame_of, generations,
+                                          locked_block, seats, traded_moments,
+                                          champion_branch, lineage_of)
 
 POPULATION = 6
 
@@ -28,10 +31,26 @@ def summary(generation=0, eliminated=4):
             "tribes": {"real": tribe, "scrambled": json.loads(json.dumps(tribe))}}
 
 
-def log(eliminated=4):
-    flies = [{"id": f"real-f{i:05d}", "final_equity": 900.0 + i, "eliminated": i < eliminated,
-              "trades_per_day": i / 2} for i in range(POPULATION)]
-    return {"tribes": {"real": {"flies": flies}, "scrambled": {"flies": list(flies)}}}
+def log(eliminated=4, generation=0, survivors=0):
+    """POPULATION flies as a generation's own log holds them.
+
+    Every fly records the generation it was `born` in and its `origin` at birth, which is what
+    the Nursery counts. At generation 0 the whole population are founders. Later, the first
+    `survivors` flies were born a generation earlier and carry the origin they were born with;
+    the rest were born into this generation, the last of them a random newcomer."""
+    flies = []
+    for i in range(POPULATION):
+        if generation == 0:
+            born, origin = 0, "founder"
+        elif i < survivors:
+            born, origin = generation - 1, "child"
+        else:
+            born, origin = generation, "newcomer" if i == POPULATION - 1 else "child"
+        flies.append({"id": f"real-f{i:05d}", "final_equity": 900.0 + i, "eliminated": i < eliminated,
+                      "trades_per_day": i / 2, "born": born, "origin": origin,
+                      "parent": None if born == 0 else f"real-f{i:05d}", "fitness": (i - 3) / 1000})
+    return {"tribes": {"real": {"flies": flies},
+                       "scrambled": {"flies": json.loads(json.dumps(flies))}}}
 
 
 def payload(**changes):
@@ -71,6 +90,21 @@ def test_a_hero_cannot_be_its_own_ancestor():
         check({"population": POPULATION, "windows": [], "frames": [f]})
 
 
+def test_at_generation_zero_the_whole_population_are_founders():
+    f = frame_of(summary(), log())
+    assert f["tribes"]["real"]["born"] == {"founder": POPULATION, "child": 0, "newcomer": 0,
+                                           "survivor": 0}
+
+
+def test_the_nursery_counts_who_was_born_this_generation():
+    """A fly born in an earlier generation is a survivor whatever it was born as, so the four
+    counts are a partition of the population and the Nursery's arithmetic always closes."""
+    f = frame_of(summary(generation=3), log(generation=3, survivors=2))
+    born = f["tribes"]["real"]["born"]
+    assert born == {"founder": 0, "child": 3, "newcomer": 1, "survivor": 2}
+    assert sum(born.values()) == POPULATION
+
+
 def test_a_run_with_no_finished_generations_is_refused(tmp_path):
     with pytest.raises(SystemExit, match="no finished generations"):
         generations(tmp_path)
@@ -85,8 +119,10 @@ def test_a_generation_without_its_full_log_is_skipped(tmp_path):
 
 def test_seats_are_rounded_to_cents():
     rows = seats({"tribes": {"real": {"flies": [{"final_equity": 1000.12345, "eliminated": False,
-                                                  "trades_per_day": 1.234}]}}}, "real")
-    assert rows == [{"equity": 1000.12, "eliminated": False, "trades_per_day": 1.23}]
+                                                  "trades_per_day": 1.234,
+                                                  "fitness": 0.01234567}]}}}, "real")
+    assert rows == [{"equity": 1000.12, "eliminated": False, "trades_per_day": 1.23,
+                     "fitness": 0.012346}]
 
 
 def evolve_bars(n=12):
@@ -114,3 +150,169 @@ def test_a_data_file_whose_rows_have_moved_is_refused():
 def test_a_candle_that_does_not_contain_its_own_body_is_caught():
     with pytest.raises(SystemExit, match="do not contain"):
         check(payload(windows=[{"candles": [[100.0, 99.0, 98.0, 100.5]]}]))    # high below the close
+
+
+def test_the_brain_room_reads_its_figures_from_the_run(tmp_path):
+    (tmp_path / "run_summary.json").write_text(json.dumps({"brain": {"neurons": 166700,
+                                                                     "readout_groups": 498}}))
+    assert brain_block(tmp_path)["neurons"] == 166700
+    assert brain_block(tmp_path / "nowhere") is None
+
+
+def test_the_vault_reads_the_locked_set_from_the_split_and_never_from_the_parquet(tmp_path,
+                                                                                 monkeypatch):
+    """PLAN.md rule 3: the locked candles are for the two finale scripts alone. split.json holds
+    the counts precisely so the vault's wall can be filled without opening the parquet."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "split.json").write_text(json.dumps(
+        {"locked": {"file": "the-candles.parquet", "rows": 52915,
+                    "first": "2026-03-17T22:00:00+00:00", "last": "2026-09-17T22:00:00+00:00"}}))
+    monkeypatch.setattr(exporter, "REPO", tmp_path)
+
+    # split.json is the only file in data/, so a block at all proves nothing else was opened
+    block = locked_block()
+    assert block["rows"] == 52915 and block["source"] == "data/split.json"
+    assert "file" not in block                 # the candles are not even named on the vault wall
+
+
+def test_a_project_without_a_split_file_simply_has_no_vault_figures(tmp_path, monkeypatch):
+    monkeypatch.setattr(exporter, "REPO", tmp_path)
+    assert locked_block() is None
+
+
+FEE = 5.0 / 1e4
+
+
+def a_finale(fills=(3, 7, 11, 15), bars=40, every=4, logged_trades=None):
+    """A finale where the model's fills are known, so what is recovered can be compared.
+
+    The fee-free wallet is a flat line; the with-fees one is the same line with one fee taken
+    out at each fill. That is exactly the relationship the real passes have, which is what makes
+    the fills recoverable at all."""
+    free = [1000.0] * bars
+    fee, taken = [], 1.0
+    for k in range(bars):
+        if k in fills:
+            taken *= 1 - FEE
+        fee.append(free[k] * taken)
+    llm = lambda equity: {"equity": equity, "trades": len(fills) if logged_trades is None else logged_trades,
+                          "decisions": bars // every, "bars_between_decisions": every,
+                          "replies": {"asked": bars // every, "counts": {"BUY": 2, "SELL": 2, "HOLD": 6},
+                                      # the last decision sits at bar (bars//every - 1) * every,
+                                      # which on this five-minute grid is 03:00
+                                      "last": [["2026-01-01T03:00:00+00:00", "HOLD"]]}}
+    return {"first_time": "2026-01-01T00:00:00+00:00", "last_time": "2026-01-01T03:15:00+00:00",
+            "bars": bars,
+            "passes": {"with_fees": {"fee_bps": 5.0, "competitors": {"llm": llm(fee)}},
+                       "no_fees": {"fee_bps": 0.0, "competitors": {"llm": llm(free)}}}}
+
+
+def test_the_model_s_fills_are_recovered_from_the_fee_step():
+    """Nothing but a fill can move the ratio between the two passes, so every step is one."""
+    out = traded_moments(a_finale(fills=(3, 7, 11, 15)))
+    assert out["count"] == 4 and out["buys"] == 2 and out["sells"] == 2
+    assert [side for _stamp, side in out["moments"]] == ["BUY", "SELL", "BUY", "SELL"]
+
+
+def test_fills_that_disagree_with_the_logged_trade_count_are_refused():
+    """The wall must never show a trade the logs do not contain (PLAN.md rule 8), so a
+    reconstruction that does not match the count the run logged is not exported at all."""
+    with pytest.raises(SystemExit, match="logged 9 trades"):
+        traded_moments(a_finale(fills=(3, 7, 11, 15), logged_trades=9))
+
+
+def test_a_clock_too_coarse_to_print_is_refused():
+    """The times are interpolated, then checked against the timestamps the run really logged."""
+    raw = a_finale(fills=(3, 7))
+    raw["passes"]["with_fees"]["competitors"]["llm"]["replies"]["last"] = [["2026-01-01T00:00:00+00:00", "HOLD"]]
+    with pytest.raises(SystemExit, match="interpolated clock"):
+        traded_moments(raw)
+
+
+def test_a_finale_with_no_fee_free_twin_recovers_nothing_rather_than_guessing():
+    raw = a_finale(fills=(3, 7))
+    del raw["passes"]["no_fees"]
+    assert traded_moments(raw) is None
+
+
+# ---- v4: the family tree, the trade tape, the replay and the eye ---------------------------
+
+def tree_rows(generations=3, population=4):
+    """Raw fly records per generation, the shape `lineage_row` returns: the top two flies of each
+    generation survive into the next one, the third is a child of the best, the fourth a
+    newcomer with no parent anywhere."""
+    rows = []
+    for g in range(generations):
+        gen = []
+        for k in range(population):
+            if g and k < 2:                       # the survivors keep their id and their parent
+                gen.append(dict(rows[g - 1][k]))
+            elif g and k == 2:
+                gen.append({"id": f"f{g}{k}", "parent": rows[g - 1][0]["id"], "origin": "child",
+                            "born": g, "fitness": .01 * k, "eliminated": True})
+            else:
+                gen.append({"id": f"f{g}{k}", "parent": None,
+                            "origin": "founder" if g == 0 else "newcomer",
+                            "born": g, "fitness": .01 * k, "eliminated": k > 1})
+        rows.append(gen)
+    return rows
+
+
+def test_a_survivor_links_to_the_seat_it_held_last_generation():
+    tree = lineage_of(tree_rows())
+    assert [f["p"] for f in tree[0]] == [-1, -1, -1, -1]       # nothing precedes generation zero
+    assert tree[1][0] == {"p": 0, "o": "s", "f": 0.0, "e": 1} or tree[1][0]["o"] == "s"
+    assert tree[1][0]["p"] == 0 and tree[1][1]["p"] == 1
+
+
+def test_a_child_links_to_its_parent_and_a_newcomer_starts_its_own_branch():
+    tree = lineage_of(tree_rows())
+    assert tree[1][2]["p"] == 0 and tree[1][2]["o"] == "c"     # child of the seat-0 survivor
+    assert tree[1][3]["p"] == -1 and tree[1][3]["o"] == "n"
+
+
+def test_the_champion_branch_joins_up_all_the_way_back():
+    rows = tree_rows()
+    tree = lineage_of(rows)
+    champ = champion_branch(tree, rows)
+    assert champ["seats"][-1] == champ["seat"]
+    for g in range(1, len(champ["seats"])):
+        here, back = champ["seats"][g], champ["seats"][g - 1]
+        if here >= 0 and back >= 0:
+            assert tree[g][here]["p"] == back
+
+
+def test_a_branch_that_does_not_join_up_is_caught(monkeypatch):
+    payload = {"population": 2, "frames": [{"generation": 0, "tribes": {}}, {"generation": 1, "tribes": {}}],
+               "windows": [],
+               "lineage": {"real": {"flies": [[{"p": -1, "o": "f", "f": 0, "e": 0},
+                                               {"p": -1, "o": "f", "f": 0, "e": 0}],
+                                              [{"p": 0, "o": "s", "f": 0, "e": 0},
+                                               {"p": 0, "o": "c", "f": 1, "e": 0}]],
+                                    "champion": {"id": "x", "seat": 1, "seats": [1, 1]}}}}
+    with pytest.raises(SystemExit, match="champion branch skips"):
+        check(payload)
+
+
+def test_the_eye_refuses_a_binning_that_loses_photoreceptors():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "eye": {"photoreceptors": 10, "cells": 2, "layout": [[0, 0], [1, 1]],
+                       "per_cell": [3, 3], "frames": [{"bar": 0, "v": [0.1, 0.2]}]}}
+    with pytest.raises(SystemExit, match="photoreceptors binned"):
+        check(payload)
+
+
+def test_a_tape_out_of_time_order_is_caught():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "tape": {"fills": [{"t": "2022-01-02T00:00:00+00:00", "side": "buy", "price": 1.0},
+                                  {"t": "2022-01-01T00:00:00+00:00", "side": "sell", "price": 1.0}]}}
+    with pytest.raises(SystemExit, match="not in time order"):
+        check(payload)
+
+
+def test_a_replay_bar_naming_a_group_with_no_name_is_caught():
+    payload = {"population": 1, "frames": [], "windows": [],
+               "replay": {"champions": {"real": {"agreement": 1.0, "groups": {"7": "type:DNp65"},
+                                                 "bars": [{"b": 0, "a": "buy", "g": [[9, .1, .2]]}]}}}}
+    with pytest.raises(SystemExit, match="has no name in the export"):
+        check(payload)

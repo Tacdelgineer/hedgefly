@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Natural Selection Capital - title cards</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#07070b}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+</style>
+</head><body>
+<canvas id="stage" aria-label="Neon riso title cards"></canvas>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   TITLE CARDS - neon riso (visuals/style.md), same core as the HQ.
+
+   Three cards, drawn with the same pen, inks, halftone screens and boil as the rooms, so a
+   cut from a card to a room does not change look. Each card is a lockup of hand-drawn type
+   over a plate of moving marks; nothing here reads run data, because a title card states the
+   film's own headings, not a measurement. Numbers belong in the rooms, where they come from
+   the logs (PLAN.md rule 8).
+
+     ?card=project|control|vault   which card
+     ?vertical                     1080x1920 framing
+     ?record                       the recorder drives the clock
+
+   Driven by scripts/record_extra.mjs through the same window.__hedgefly surface the HQ has.
+   ===================================================================== */
+if(new URLSearchParams(location.search).has('record')){window.__HEDGEFLY_VCLOCK__=0;window.__HEDGEFLY_VCLOCK_DRIVEN__=true}
+const qs=new URLSearchParams(location.search);
+const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
+const FPS=12,BOIL_EVERY=4;
+const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:performance.now();
+let W=1,H=1,dpr=1,started=NOW(),lastFrame=-1,CARD='project';
+
+function resize(){
+  dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;
+  stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastFrame=-1;
+}
+addEventListener('resize',resize);
+
+/* ---------------------------------------------------------------------
+   THE CARDS
+   Each is {lines, rule, ink, sub, marks}: the lettering, its underline, the plate colour of
+   the accent, a quiet second line, and the moving marks behind the type.
+   --------------------------------------------------------------------- */
+const CARDS={
+  project:{ink:'gold',
+    lines:[['NATURAL',1],['SELECTION',1],['CAPITAL',1]],
+    sub:'A HUNDRED FRUIT-FLY BRAINS TRADE BITCOIN',
+    marks:'swarm'},
+  control:{ink:'magenta',
+    lines:[['THE',.62],['CONTROL',1]],
+    sub:'THE SAME BRAINS, REWIRED AT RANDOM',
+    marks:'shuffle'},
+  vault:{ink:'amber',
+    lines:[['THE',.62],['VAULT',1]],
+    sub:'SIX MONTHS NO FLY HAS EVER SEEN',
+    marks:'bars'},
+};
+
+/* the swarm: flies drifting across the plate, the same fly the rooms draw */
+function swarm(pen,t){
+  const R=stream('title-swarm');
+  for(let k=0;k<26;k++){
+    // spread in screen space, not in tile space: an iso box would pile them into one corner
+    const bx=rand(R,-2,16),by=rand(R,-10,14),sp=rand(R,.12,.4),ph=rand(R,0,TAU);
+    const i=bx+Math.sin(t*sp+ph)*2.4,j=by+Math.cos(t*sp*.8+ph)*1.6;
+    pen.fly(i,j,0,{t,pose:'hover',ink:k%5?'slate':'cyan',tone:k%5?.4:.7,scale:rand(R,.8,1.7),
+                   facing:Math.cos(t*sp+ph)>=0?1:-1,phase:ph,noShadow:true,glowStrength:.5});
+  }
+}
+/* the shuffle: two columns of neurons, edges re-drawn to the wrong partners.
+   Drawn in screen space, not tile space: an isometric column would lean off the card. */
+function shuffle(pen,t){
+  const R=stream('title-shuffle'),n=9,A=[],B=[],X=520,top=-250,gap=62;
+  for(let k=0;k<n;k++){A.push([-X,top+k*gap]);B.push([X,top+k*gap])}
+  for(let k=0;k<n;k++){
+    const swap=randi(R,0,n-1),u=(Math.sin(t*.55+k*.7)+1)/2;
+    const to=B[Math.round(lerp(k,swap,u))%n];
+    pen.line([A[k],to],u>.5?'magenta':'slate',1.1,{tone:.18+u*.22,amp:1.2});
+  }
+  for(const q of A)pen.dot(q[0],q[1],4,'cyan',.85);
+  for(const q of B)pen.dot(q[0],q[1],4,'magenta',.85);
+}
+/* the bars: a run of candles sealed behind hazard stripes, across the foot of the card */
+function bars(pen,t){
+  const R=stream('title-bars'),n=44,x0=-620,step=1240/n;
+  let mid=250;                                 // clear of the lockup: the candles sit at its foot
+  for(let k=0;k<n;k++){
+    mid+=rand(R,-14,14);
+    const x=x0+k*step,h=rand(R,26,120),up=R()>.45;
+    pen.line([[x,mid-h/2],[x,mid+h/2]],up?'cyan':'magenta',3,{tone:.22,amp:.6});
+  }
+  for(let k=0;k<14;k++){                       // hazard stripes, marching slowly to the right
+    const u=(t*.16+k/14)%1,x=-680+u*1360;
+    pen.line([[x,368],[x+46,428]],'amber',4,{tone:.2,amp:.4});
+  }
+}
+const MARKS={swarm,shuffle,bars};
+
+function draw(frameNo){
+  const t=frameNo/FPS,boil=Math.floor(frameNo/BOIL_EVERY);
+  const card=CARDS[CARD]||CARDS.project,vertical=document.body.classList.contains('vertical');
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,stage.width,stage.height);
+
+  // one world unit per card, sized so the lettering fills the frame in either shape
+  const zoom=Math.min(W/980,H/(vertical?1500:760))*(vertical?1.18:1);
+  ctx.setTransform(dpr*zoom,0,0,dpr*zoom,dpr*W/2,dpr*H/2);
+  const pen=makePen(ctx,{ox:-330,oy:vertical?-150:-190,boil});
+
+  // the plate behind the type
+  try{(MARKS[card.marks]||swarm)(pen,t)}catch(e){console.error('marks',e)}
+  ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+
+  /* the lockup, measured and then centred: a glyph is drawn downward from its anchor and
+     stands CAP high, so the stack's true height is known before the first letter is laid. */
+  const CAP=.83, GAP=.30, unit=vertical?98:106;
+  const sizes=card.lines.map(([,scale])=>unit*scale);
+  const subSize=vertical?21:20, ruleGap=unit*.34, subGap=unit*.42;
+  const stack=sizes.reduce((h,s,k)=>h+s*CAP+(k?sizes[k-1]*GAP:0),0);
+  const total=stack+ruleGap+subGap+subSize*CAP;
+  let y=-total/2;
+  const accent=card.lines.length-1;
+  card.lines.forEach(([str,],k)=>{
+    if(k)y+=sizes[k-1]*GAP;
+    textCentred(pen,str,[0,y],sizes[k],{ink:k===accent?card.ink:'ghost',
+                                        w:k===accent?5:4,gap:.26,tone:k===accent?1:.88});
+    if(k===accent)                           // the glow breathes behind the word that carries the card
+      pen.halo(0,y+sizes[k]*CAP/2,150+Math.sin(t*.9)*16,card.ink,.055);
+    y+=sizes[k]*CAP;
+  });
+  y+=ruleGap;
+  const half=Math.max(300,textWidth(card.sub,subSize,.42)/2+26);
+  pen.line([[-half,y],[half,y]],card.ink,3,{tone:.8,amp:1.4});
+  y+=subGap;
+  textCentred(pen,card.sub,[0,y],subSize,{ink:'ghost',tone:.62,w:1.5,gap:.42});
+
+  ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  const a=toWorld(0,0),b=toWorld(W,H);
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);
+  ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
+}
+function toWorld(sx,sy){
+  const card=CARDS[CARD]||CARDS.project,vertical=document.body.classList.contains('vertical');
+  const zoom=Math.min(W/980,H/(vertical?1500:760))*(vertical?1.18:1);
+  return {x:(sx-W/2)/zoom,y:(sy-H/2)/zoom};
+}
+
+function stepFrame(){
+  if(innerWidth!==W||innerHeight!==H)resize();
+  const f=Math.floor((NOW()-started)/1000*FPS);
+  if(f!==lastFrame){draw(f);lastFrame=f}
+}
+function tick(){if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(tick);stepFrame()}
+
+window.__hedgefly={ready:false,
+  step(ms){window.__HEDGEFLY_VCLOCK__=(window.__HEDGEFLY_VCLOCK__||0)+ms;stepFrame()},
+  card(id){CARD=id;started=NOW();lastFrame=-1},
+  cards:()=>Object.keys(CARDS)};
+
+if(qs.has('vertical'))document.body.classList.add('vertical');
+CARD=qs.get('card')||'project';
+resize();started=NOW();window.__hedgefly.ready=true;
+if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(tick);else stepFrame();
+</script>
+</body></html>

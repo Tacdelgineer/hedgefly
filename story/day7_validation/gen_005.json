@@ -1,0 +1,19 @@
+{
+ "headline": "Generation 5: Real Connectomes Lead",
+ "narration": "The real tribe\u2019s best fitness of 0.028347 yields a final equity of 1028.75, outperforming the scrambled tribe\u2019s best of 0.025347 and 1025.67. While the scrambled group executes 5764 total trades compared to the real group's 1762, structural integrity proves decisive.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Generation 5 Results",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.fitness.best",
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.fitness.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 5,
+ "attempts": 1
+}

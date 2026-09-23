@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neon riso - example world</title>
+<style>
+  :root{--paper:#07070b;--ghost:#d8dcff;--gold:#ffc93c;
+        --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--paper)}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  #ui{position:fixed;left:0;right:0;bottom:0;padding:9px 14px 11px;display:flex;align-items:center;gap:10px;
+      font:12px/1.5 var(--mono);color:var(--ghost);letter-spacing:.08em;text-transform:uppercase;
+      background:linear-gradient(to top,rgba(7,7,11,.96),rgba(7,7,11,.7));user-select:none}
+  #ui button{font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--ghost);
+      background:transparent;border:1px solid rgba(216,220,255,.45);padding:3px 10px;cursor:pointer}
+  #scrub{flex:1 1 200px;accent-color:var(--gold)}
+  body.clean #ui{display:none!important}
+</style>
+</head><body>
+<canvas id="stage" aria-label="An isometric neon riso world"></canvas>
+<div id="ui">
+  <button id="play">pause</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="stage">
+  <span id="label">stage 0</span>
+  <span id="stat"></span>
+</div>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   A ONE-ROOM NEON RISO WORLD - the smallest thing that is still the real pattern.
+
+   Copy this file, keep the four marked sections, and add rooms. Everything it puts on a wall
+   comes out of data.json (see data-contract.md); nothing is typed into the page.
+
+     ?stage=3    open on a given stage      ?clean     hide the controls
+     ?vertical   1080x1920 framing          ?record    the recorder drives the clock
+     ?data=...   a different contract file
+   ===================================================================== */
+
+/* --- 1. THE CLOCK ------------------------------------------------------------------------
+   Read time from here, never from performance.now() directly. When the recorder sets
+   __HEDGEFLY_VCLOCK__ it owns the clock, and a recording becomes exact and repeatable. */
+if(new URLSearchParams(location.search).has('record')){
+  window.__HEDGEFLY_VCLOCK__=0;window.__HEDGEFLY_VCLOCK_DRIVEN__=true;
+}
+const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:performance.now();
+const DRIVEN=()=>!!window.__HEDGEFLY_VCLOCK_DRIVEN__;
+
+const qs=new URLSearchParams(location.search);
+const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
+const ui={play:document.getElementById('play'),scrub:document.getElementById('scrub'),
+          label:document.getElementById('label'),stat:document.getElementById('stat')};
+const FPS=12,BOIL_EVERY=4,SLOT=13,MIN_Z=.15,MAX_Z=6,MS_PER_STAGE=2200;
+let W=1,H=1,dpr=1,lastFrame=-1,lastCam='',started=NOW(),stageStart=0;
+let RUN=null,STAGE=0,PLAYING=true;
+const cam={x:0,y:0,zoom:1};let camBase={x:0,y:0,zoom:1},tween=null;
+
+/* --- 2. THE ROOMS -------------------------------------------------------------------------
+   Each room is a box on a (col,row) grid with a draw(). `pen` is the whole drawing surface;
+   `t` is seconds; `R` is a per-room seeded random, so a room's scatter never re-rolls. */
+const ROOMS=[];
+const room=def=>ROOMS.push({w:10,d:10,h:3,col:0,row:0,...def});
+const F=()=>RUN.frames[clamp(STAGE,0,RUN.frames.length-1)];
+/* Inks are handed out by the subject's position in the contract, never by its name: the world
+   then works for any project's nouns. The first two are equally bright on purpose - they are
+   the two things being compared, and neither may look like the winner (style.md). */
+const PALETTE=['cyan','magenta','gold','amber'];
+const INK=name=>PALETTE[RUN.subjects.indexOf(name)]||'ghost';
+const fmt=v=>Number(v).toLocaleString('en-US',{maximumFractionDigits:1});
+
+room({id:'floor',col:0,row:0,w:9,d:8,h:3.2,
+  style:{floor:['slate',.3],wall:['slate',.12],wall2:['slate',.15],planks:true},
+  draw(pen,t,R){
+    const p=pen.p,f=F();
+
+    /* the sign over the door: a label, so no data is needed */
+    text(pen,'THE FLOOR',pen.wallQuad('i',.6,2.66,.01,.01,.06)[0],15,{wall:'i',w:1.3,tone:.9});
+    text(pen,'TWO GROUPS, ONE TASK',pen.wallQuad('i',.6,2.3,.01,.01,.06)[0],7,{wall:'i',tone:.55});
+
+    /* the wall board: every figure read straight out of the contract */
+    const board=pen.wallQuad('i',4.1,.7,4.3,1.9,.05);
+    pen.shape(board,['slate',.1],{w:1.1});
+    RUN.subjects.forEach((name,k)=>{
+      const s=f.subjects[name],ink=INK(name),z=2.02-k*.86;
+      text(pen,name.toUpperCase(),pen.wallQuad('i',4.35,z,.01,.01,.1)[0],8.5,{wall:'i',ink,w:1});
+      text(pen,fmt(s.median)+' MEDIAN',pen.wallQuad('i',4.35,z-.3,.01,.01,.1)[0],6,{wall:'i',ink,tone:.75});
+      text(pen,s.alive+' OF '+(s.alive+s.gone)+' LEFT',pen.wallQuad('i',4.35,z-.54,.01,.01,.1)[0],6,{wall:'i',tone:.55});
+      // a bar as long as this subject's median stands away from the opening value
+      const span=Math.abs(s.median-RUN.start_value)/Math.max(1e-6,RUN.start_value*.05);
+      pen.tint(pen.wallQuad('i',7.05,z-.12,Math.min(1,span)*1.2+.05,.13,.11),ink,.7);
+    });
+
+    /* the desks: one per member still in, dark once it is gone */
+    RUN.subjects.forEach((name,k)=>{
+      const s=f.subjects[name],n=s.alive+s.gone,ink=INK(name);
+      for(let q=0;q<n;q++){
+        const i=.9+(q%7)*.62,j=1.3+k*2.6+Math.floor(q/7)*.82,out=q>=s.alive;
+        pen.box(i,j,0,.44,.3,.22,{ink:'slate',tone:out?.15:.32,w:.6});
+        if(!out)pen.fly(i+.2,j+.42,.22,{t,pose:'sit',ink,tone:.8,scale:.6,phase:q*.37,noShadow:true});
+      }
+    });
+
+    /* the furniture, so the room is a place and not a slide */
+    pen.rug(5.4,5.4,3,2.2,{ink:'slate',tone:.12,border:'slate'});
+    pen.table(5.8,5.7,2,1.3,.75,{ink:'slate',tone:.32});
+    pen.lamp(8.2,1.2,{t});
+    pen.plant(8.3,7,0,{t,size:1.05});
+    pen.fly(7.2,6.4,0,{t,pose:'hover',ink:'slate',scale:1.15,facing:-1,phase:2.1});
+  }});
+
+room({id:'curve',col:1,row:0,w:8,d:7,h:3.2,
+  style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:false},
+  draw(pen,t,R){
+    const p=pen.p;
+    text(pen,'THE CURVE',pen.wallQuad('j',5.9,2.7,.01,.01,.08)[0],14,{wall:'j',w:1.3});
+    text(pen,'EVERY STAGE SO FAR',pen.wallQuad('j',5.9,2.32,.01,.01,.08)[0],6.5,{wall:'j',tone:.6});
+    pen.shape(pen.wallQuad('i',.5,.8,7,2.1,.05),['slate',.1],{w:1.2});
+
+    /* frames.slice(0, STAGE+1) is the whole trick: the line draws itself as the stage advances */
+    const seen=RUN.frames.slice(0,STAGE+1);
+    const all=RUN.frames.flatMap(f=>RUN.subjects.map(s=>f.subjects[s].median)).concat(RUN.start_value);
+    const lo=Math.min(...all),hi=Math.max(...all),span=Math.max(hi-lo,1e-9);
+    const X=k=>.7+(RUN.frames.length<2?0:k/(RUN.frames.length-1))*6.2;
+    const Z=v=>1.0+(v-lo)/span*1.7, At=(u,z)=>p(u,.07,z);
+
+    pen.line([At(.6,Z(RUN.start_value)),At(7.1,Z(RUN.start_value))],'ghost',.7,{tone:.32,dash:[4,4],amp:0});
+    for(const name of RUN.subjects){
+      const pts=seen.map((f,k)=>At(X(k),Z(f.subjects[name].median)));
+      if(pts.length>1)pen.line(pts,INK(name),1.7,{amp:.2});
+      else if(pts.length)pen.dot(...pts[0],2.4,INK(name),1);
+    }
+    pen.lamp(1,2.1,{t});
+    pen.fly(6,5.2,0,{t,pose:'stand',ink:'slate',scale:1.2,facing:-1,phase:.9});
+  }});
+
+/* --- 3. THE RUNTIME -----------------------------------------------------------------------
+   Layout, camera, the 12fps boil, and the draw loop. Copy this section as it stands. */
+function layout(){
+  for(const r of ROOMS){
+    r.oi=r.col*SLOT;r.oj=r.row*SLOT;[r.ox,r.oy]=iso(r.oi,r.oj);
+    const pts=[];
+    for(const a of[-.5,r.w+.3])for(const b of[-.5,r.d+.3])for(const z of[-1,r.h+.6])
+      pts.push(iso(r.oi+a,r.oj+b,z));
+    r.bounds=[Math.min(...pts.map(q=>q[0])),Math.min(...pts.map(q=>q[1])),
+              Math.max(...pts.map(q=>q[0])),Math.max(...pts.map(q=>q[1]))];
+  }
+  ROOMS.sort((a,b)=>(a.oi+a.oj)-(b.oi+b.oj));
+}
+const framing=b=>({x:(b[0]+b[2])/2,y:(b[1]+b[3])/2,
+  zoom:clamp(Math.min(W/(b[2]-b[0]),H/(b[3]-b[1]))*.92,MIN_Z,MAX_Z)});
+const allBounds=()=>ROOMS.reduce((a,r)=>[Math.min(a[0],r.bounds[0]),Math.min(a[1],r.bounds[1]),
+  Math.max(a[2],r.bounds[2]),Math.max(a[3],r.bounds[3])],[1e9,1e9,-1e9,-1e9]);
+const roomById=id=>ROOMS.find(r=>r.id===id);
+const toWorld=(sx,sy)=>({x:(sx-W/2)/cam.zoom+cam.x,y:(sy-H/2)/cam.zoom+cam.y});
+function resize(){W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);
+  stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastCam=''}
+function jump(target,ms){if(ms<=0){Object.assign(cam,target);camBase={...target};tween=null;lastCam=''}
+  else tween={from:{...cam},to:target,start:NOW(),ms}}
+function goToRoom(id,ms=1400){const r=roomById(id);if(r)jump(framing(r.bounds),ms)}
+function building(ms=2200){jump(framing(allBounds()),ms)}
+// a slow, never-repeating wander, so a still camera is never quite still
+const drift=s=>({x:Math.sin(s*.13)*16+Math.sin(s*.047)*9,y:Math.sin(s*.09+1.3)*9,z:1+Math.sin(s*.061)*.035});
+
+function draw(frameNo){
+  const t=frameNo/FPS,boil=Math.floor(frameNo/BOIL_EVERY),z=cam.zoom;
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,stage.width,stage.height);
+  ctx.setTransform(dpr*z,0,0,dpr*z,dpr*(W/2-cam.x*z),dpr*(H/2-cam.y*z));
+  const a=toWorld(0,0),b=toWorld(W,H);
+  for(const r of ROOMS){
+    if(r.bounds[2]<a.x||r.bounds[0]>b.x||r.bounds[3]<a.y||r.bounds[1]>b.y)continue;   // off camera
+    const pen=makePen(ctx,{ox:r.ox,oy:r.oy,boil});
+    try{pen.shell(r);r.draw&&r.draw(pen,t,stream(r.id))}catch(e){console.error('room '+r.id,e)}
+    ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  }
+  // the grain goes on last, over everything, like the paper it was printed on
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);
+  ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.globalCompositeOperation='source-over';
+}
+
+function setStage(s){if(!RUN)return;STAGE=clamp(Math.round(s),0,RUN.frames.length-1);paint()}
+function paint(){
+  if(!RUN)return;const f=F();
+  ui.scrub.value=STAGE;ui.label.textContent=`stage ${f.stage} / ${RUN.frames.length-1}`;
+  ui.stat.textContent=RUN.subjects.map(n=>`${n} ${fmt(f.subjects[n].median)}`).join('  |  ')
+    +(RUN.fake?'   ·   FAKE DATA':'');
+  ui.play.textContent=PLAYING?'pause':'play';lastCam='';
+}
+function tickOnce(now){
+  if(PLAYING&&RUN&&now-stageStart>=MS_PER_STAGE){
+    stageStart=now;setStage(STAGE+1>=RUN.frames.length?0:STAGE+1);
+  }
+}
+function stepFrame(){
+  const now=NOW();
+  if(innerWidth!==W||innerHeight!==H)resize();
+  if(tween){
+    const u=clamp((now-tween.start)/tween.ms,0,1),e=ease(u);
+    cam.x=lerp(tween.from.x,tween.to.x,e);cam.y=lerp(tween.from.y,tween.to.y,e);
+    cam.zoom=lerp(tween.from.zoom,tween.to.zoom,e);
+    if(u>=1){camBase={...tween.to};tween=null}
+  }else{
+    const d=drift(now/1000);
+    cam.x=camBase.x+d.x;cam.y=camBase.y+d.y;cam.zoom=camBase.zoom*d.z;
+  }
+  const f=Math.floor((now-started)/1000*FPS);
+  const key=`${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(4)},${W},${H},${STAGE}`;
+  if(f!==lastFrame||key!==lastCam){draw(f);lastFrame=f;lastCam=key}
+}
+function tick(){if(!DRIVEN())requestAnimationFrame(tick);tickOnce(NOW());stepFrame()}
+
+/* --- 4. THE CONTROL SURFACE ---------------------------------------------------------------
+   What scripts/record_hq.mjs drives. A page without this cannot be filmed. */
+window.__hedgefly={ready:false,
+  step(ms){window.__HEDGEFLY_VCLOCK__=(window.__HEDGEFLY_VCLOCK__||0)+ms;tickOnce(NOW());stepFrame()},
+  shot(kind,arg,ms=0){if(kind==='room')goToRoom(arg,ms);else if(kind==='building')building(ms)},
+  play(on){PLAYING=on;stageStart=NOW()},
+  stage(s){setStage(s)},
+  cam(x,y,zoom){tween=null;camBase={x,y,zoom:clamp(zoom,MIN_Z,MAX_Z)};
+    cam.x=x;cam.y=y;cam.zoom=camBase.zoom;lastCam=''},
+  frame(id){const r=roomById(id);return r?framing(r.bounds):null},
+  spot(id,i,j,z=0){const r=roomById(id);if(!r)return null;const [x,y]=iso(r.oi+i,r.oj+j,z);return {x,y}},
+  rooms:()=>ROOMS.map(r=>r.id),
+  stages:()=>RUN?RUN.frames.length:0};
+
+async function loadRun(){
+  // inlined by the recorder and by any standalone build; fetched when served over http
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
+  const r=await fetch(qs.get('data')||'data.json');
+  if(!r.ok)throw new Error(`${r.status} fetching the contract file`);
+  return r.json();
+}
+async function boot(){
+  if(qs.has('vertical'))document.body.classList.add('vertical');
+  if(qs.has('clean')||qs.has('record'))document.body.classList.add('clean');
+  try{RUN=await loadRun()}
+  catch(e){console.error(e);ui.label.textContent='no data: serve this over http, or inline it';return}
+  if(!(RUN.contract_version>=1)){ui.label.textContent='unreadable contract version';return}
+  resize();layout();
+  ui.scrub.max=RUN.frames.length-1;
+  STAGE=clamp(+(qs.get('stage')||0),0,RUN.frames.length-1);
+  PLAYING=!qs.has('record')&&qs.get('play')!=='0';
+  ui.play.onclick=()=>{PLAYING=!PLAYING;stageStart=NOW();paint()};
+  ui.scrub.oninput=()=>{PLAYING=false;setStage(+ui.scrub.value)};
+  building(0);paint();
+  started=NOW();stageStart=NOW();window.__hedgefly.ready=true;
+  if(!DRIVEN())requestAnimationFrame(tick);else stepFrame();
+}
+boot();
+</script>
+</body></html>

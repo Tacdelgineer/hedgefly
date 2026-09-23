@@ -40,6 +40,7 @@
   <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="generation">
   <span id="gen"></span>
 </div>
+<!--HEDGEFLY-DATA-->
 <script>
 'use strict';
 /* =====================================================================
@@ -357,7 +358,7 @@ function drawHero(r,f,time,scale){
 
 /* ---------- panels ---------- */
 function drawScore(r,f){
-  pane(r,'scoreboard · 4 fixed days');
+  pane(r,`scoreboard · ${days().length} fixed days`);
   const rows=[];
   for(const tribe of RUN.tribes){
     const d=f.tribes[tribe];
@@ -417,7 +418,10 @@ function drawLocked(r,time){
   ctx.save(); ctx.globalAlpha=pulse;
   label('last 6 months', r.x+10, r.y+r.h-30, {color:C.locked, size:11});
   ctx.restore();
-  label('52,915 bars  ·  sealed', r.x+10, r.y+r.h-14, {color:C.dim, size:9});
+  const lk=RUN&&RUN.locked, fin=RUN&&RUN.finale;
+  const barsLine=fin?fin.bars.toLocaleString('en-US')+' bars  ·  traded'
+               :lk?lk.rows.toLocaleString('en-US')+' bars  ·  sealed':'sealed';
+  label(barsLine, r.x+10, r.y+r.h-14, {color:C.dim, size:9});
 }
 
 function drawHead(r,f){
@@ -508,9 +512,12 @@ function loop(now){
 async function boot(){
   resize();
   try{
-    const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
-    if(!r.ok) throw new Error('runs.json: '+r.status);
-    RUN=await r.json();
+    if(window.__HEDGEFLY_RUN__) RUN=window.__HEDGEFLY_RUN__;       // inlined: the inset in hedgefly.html
+    else{
+      const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+      if(!r.ok) throw new Error('runs.json: '+r.status);
+      RUN=await r.json();
+    }
   }catch(e){
     document.getElementById('boot').textContent='no runs.json — serve over http; see visuals/hq/data-contract.md';
     console.error(e); return;
@@ -524,6 +531,8 @@ async function boot(){
   scrub.max=RUN.generations-1;
   scrub.oninput=e=>{PLAYING=false; setGeneration(+e.target.value); paintUI()};
   document.getElementById('play').onclick=()=>{PLAYING=!PLAYING; lastTick=performance.now(); paintUI()};
+  // as an inset inside the HQ, follow the generation the HQ is showing
+  addEventListener('message',e=>{if(e.data&&e.data.hedgefly==='gen'){PLAYING=false;setGeneration(+e.data.gen)}});
   addEventListener('keydown',e=>{
     if(e.key===' '){PLAYING=!PLAYING; lastTick=performance.now(); paintUI(); e.preventDefault()}
     else if(e.key==='['){PLAYING=false; setGeneration(GEN-1)}

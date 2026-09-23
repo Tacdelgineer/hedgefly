@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hedgefly poster</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#07070b}
+  canvas{display:block;width:100%;height:100%}
+</style>
+</head><body>
+<canvas id="card" aria-label="A poster card for one generation of the Hedgefly run"></canvas>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   POSTER CARDS — one per generation (PLAN.md NARRATOR + POSTER, visuals/style.md).
+
+   ?gen=N picks the generation; the shape follows the window, so a 1080x1920 window gives the
+   vertical card and 1920x1080 the wide one. Huge headline, one illustration, three stats.
+
+   Rule 8: every number on the card is read out of runs.json, which comes from the logs. The
+   headline carries no numbers at all; it is chosen by rules from the same data, and a narrator
+   headline that has passed the Fact Guard can replace it through ?headline=.
+   ===================================================================== */
+const qs=new URLSearchParams(location.search);
+const cv=document.getElementById('card'),ctx=cv.getContext('2d',{alpha:false});
+
+const posterHeadline=(run,g)=>qs.get('headline')||headlineFor(run,g);   // a narrator headline may override the rule
+function stats(run,g){
+  const f=run.frames[g],h=f.heroes.real;
+  return [{label:'real tribe, median fly',value:money(f.tribes.real.equity.median),ink:'cyan'},
+          {label:'scrambled tribe, median fly',value:money(f.tribes.scrambled.equity.median),ink:'magenta'},
+          {label:'the hero, '+h.id.replace(/^real-/,''),value:money(h.equity),ink:'gold'}];
+}
+function wrap(words,size,maxW){
+  const lines=[];let line='';
+  for(const w of words.toUpperCase().split(/\s+/)){const next=line?line+' '+w:w;
+    if(textWidth(next,size,.3)<=maxW||!line)line=next;else{lines.push(line);line=w}}
+  if(line)lines.push(line);return lines;
+}
+
+function drawCard(run,g){
+  const W=innerWidth,H=innerHeight,dpr=Math.min(2,devicePixelRatio||1),tall=H>W*1.1;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,W,H);
+  const pen=makePen(ctx,{ox:0,oy:0,boil:qs.has('boil')?+qs.get('boil'):0}),f=run.frames[g];
+  const m=Math.round(Math.min(W,H)*.06);
+
+  // masthead
+  text(pen,'NATURAL SELECTION CAPITAL',[m,m],Math.max(10,W*.012),{tone:.75,w:1.2});
+  const tag='GENERATION '+String(f.generation).padStart(2,'0')+' OF '+(run.generations-1);
+  text(pen,tag,[W-m-textWidth(tag,Math.max(10,W*.012)),m],Math.max(10,W*.012),{ink:'gold',w:1.2});
+  pen.line([[m,m+Math.max(10,W*.012)+14],[W-m,m+Math.max(10,W*.012)+14]],'ghost',1,{tone:.35});
+
+  // the illustration box: the four real days as a candle strip, the hero fly over them
+  const ill=tall?{x:m,y:H*.40,w:W-2*m,h:H*.30}:{x:W*.52,y:H*.17,w:W*.48-m,h:H*.56};
+  const days=run.windows||[],gap=ill.w*.02,dw=(ill.w-gap*(days.length-1))/Math.max(1,days.length);
+  days.forEach((day,d)=>{const bars=day.candles||[];if(!bars.length)return;
+    const lo=Math.min(...bars.map(b=>b[2])),hi=Math.max(...bars.map(b=>b[1])),span=Math.max(hi-lo,1e-9);
+    const y=v=>ill.y+ill.h*.92-(v-lo)/span*ill.h*.62,x0=ill.x+d*(dw+gap),bw=dw/bars.length;
+    bars.forEach(([o,h,l,c],k)=>{const x=x0+(k+.5)*bw,ink=c>=o?'ghost':'slate',tone=c>=o?.5:.6;
+      pen.line([[x,y(h)],[x,y(l)]],ink,1,{tone,amp:0});
+      pen.tint([[x-bw*.3,y(Math.max(o,c))],[x+bw*.3,y(Math.max(o,c))],[x+bw*.3,y(Math.min(o,c))+1],[x-bw*.3,y(Math.min(o,c))+1]],ink,tone)})});
+  const cx=ill.x+ill.w*.5,cy=ill.y+ill.h*.52,sc=Math.min(ill.w,ill.h)/58;
+  pen.halo(cx,cy-14*sc,Math.min(ill.w,ill.h)*.46,'gold',.5);
+  const flyPen=makePen(ctx,{ox:cx,oy:cy+22*sc,boil:0});
+  flyPen.fly(0,0,0,{t:.37,scale:sc,ink:'gold',pose:'hover',phase:.9,noShadow:true,glowStrength:1.4});
+
+  // the headline: huge, set in the stencil, as many lines as it needs
+  const hBox=tall?{x:m,y:m*2.4,w:W-2*m,h:H*.30}:{x:m,y:H*.17,w:W*.47-m,h:H*.56};
+  let size=Math.min(hBox.w/5.5,hBox.h/2.4),lines=wrap(posterHeadline(run,g),size,hBox.w);
+  while(lines.length*size*1.22>hBox.h&&size>20){size*=.92;lines=wrap(posterHeadline(run,g),size,hBox.w)}
+  lines.forEach((line,k)=>text(pen,line,[hBox.x,hBox.y+k*size*1.22],size,{w:Math.max(2,size/13),gap:.3,amp:.6,tone:1}));
+
+  // three stats from the logs
+  // wide: three columns along the bottom; tall: three rows, one stat to a line
+  const st=stats(run,g);
+  st.forEach((s,k)=>{
+    const box=tall?{x:m,y:H*.735+k*H*.068,w:W-2*m}:{x:m+k*(W-2*m)/3,y:H*.70,w:(W-2*m)/3-m*.4};
+    const vs=tall?H*.036:Math.min(box.w/5,H*.075);
+    pen.line([[box.x,box.y],[box.x+box.w,box.y]],s.ink,1.5,{tone:.8});
+    text(pen,s.value,[box.x,box.y+vs*.35],vs,{ink:s.ink,w:Math.max(1.4,vs/14),gap:.25});
+    const lx=tall?box.x+textWidth(s.value,vs,.25)+vs*.6:box.x, ly=tall?box.y+vs*.35+vs*.62:box.y+vs*1.6;
+    text(pen,s.label,[lx,ly],Math.max(9,tall?vs*.34:vs*.26),{tone:.7,w:1})});
+
+  // colophon: where the numbers came from
+  const src=(run.fake?'FAKE DATA · ':'')+'FROM THE LOGS OF RUN '+run.run_id+' · 4 FIXED DAYS · $1,000 A DAY'+
+            (!qs.get('headline')&&toldHeadline(f)?' · HEADLINE BY THE LOCAL MODEL, FACT GUARD ON':'');
+  text(pen,src,[m,H-m],Math.max(8,W*.009),{tone:.5,w:.9});
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation='source-over';
+  document.title=`Hedgefly · generation ${f.generation} · ${posterHeadline(run,g)}`;
+  document.body.dataset.ready='1';
+}
+
+async function loadRun(){
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
+  const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+  if(!r.ok)throw new Error('runs.json: '+r.status);return r.json();
+}
+loadRun().then(run=>{
+  if(!(run.contract_version>=2))throw new Error('posters read data contract v2 or later');
+  const g=Math.max(0,Math.min(run.generations-1,+(qs.get('gen')||run.generations-1)));
+  drawCard(run,g);addEventListener('resize',()=>drawCard(run,g));
+}).catch(e=>{console.error(e);document.body.textContent=String(e)});
+</script>
+</body></html>

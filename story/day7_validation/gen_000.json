@@ -1,0 +1,17 @@
+{
+ "headline": "Real connectomes outperform scrambled wiring",
+ "narration": "The real tribe's best fly, real-f00002, reached a final equity of 1021.14 with a fitness of 0.020918. The scrambled tribe's leader, scrambled-f00043, ended at 1019.96 equity and 0.01976 fitness.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Generation 0 Results",
+  "featured_room": "lab",
+  "stat_keys": [
+   "tribes.real.final_equity.best",
+   "tribes.real.fitness.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.scrambled.fitness.best"
+  ]
+ },
+ "generation": 0,
+ "attempts": 2
+}

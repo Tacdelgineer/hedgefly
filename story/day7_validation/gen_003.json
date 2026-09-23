@@ -1,0 +1,18 @@
+{
+ "headline": "Generation 3: Real Connectomes Lead",
+ "narration": "The real tribe's best fitness of 0.024869 yields a final equity of 1025.18, outperforming the scrambled tribe's top result of 1022.03. While the scrambled group executes 6217 total trades compared to the real group's 1969, the structured wiring proves more efficient.",
+ "poster": {
+  "title": "Wiring Efficiency",
+  "subtitle": "Genome Evolution in Fruit Flies",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.fitness.best",
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 3,
+ "attempts": 1
+}

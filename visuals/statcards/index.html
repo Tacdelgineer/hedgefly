@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Natural Selection Capital - stat cards</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#07070b}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+</style>
+</head><body>
+<canvas id="stage" aria-label="Neon riso stat cards for the finale"></canvas>
+<!--NEON-RISO--><script src="../lib/neon-riso.js"></script><!--/NEON-RISO-->
+<script>
+'use strict';
+/* =====================================================================
+   STAT CARDS - neon riso (visuals/style.md), same core as the HQ and the title cards.
+
+   One number or two per card, counted up from nothing and then held, over the equity curves
+   they came from. Every number and every curve is read out of runs.json's finale block, which
+   scripts/export_for_visuals.py copies from runs/<run>/finale.json (PLAN.md rule 8); the words
+   around them carry no numbers of their own. Tribe colours keep their meaning: cyan is the real
+   tribe, magenta the scrambled one, and everything else is ghost or slate.
+
+     ?card=S1..S7        which card (see CARDS)
+     ?vertical           1080x1920 framing
+     ?record             the recorder drives the clock
+
+   Driven by scripts/record_stats.mjs through the same window.__hedgefly surface as the titles.
+   ===================================================================== */
+if(new URLSearchParams(location.search).has('record')){window.__HEDGEFLY_VCLOCK__=0;window.__HEDGEFLY_VCLOCK_DRIVEN__=true}
+const qs=new URLSearchParams(location.search);
+const stage=document.getElementById('stage'),ctx=stage.getContext('2d',{alpha:false});
+const FPS=12,BOIL_EVERY=4,COUNT=2.4,NOTE_IN=.5;       // seconds: the count, then the note fades in
+// The core's 8 is an O with a bar, which at this size reads as a 0 ("$871" as "$071"). A card
+// is nothing but its number, so here the 8 is two stacked loops, pinched at the waist.
+GLYPHS['8']='103041423313020110|133344453616050413';
+const NOW=()=>window.__HEDGEFLY_VCLOCK__!=null?window.__HEDGEFLY_VCLOCK__:performance.now();
+let W=1,H=1,dpr=1,started=NOW(),lastFrame=-1,CARD='S1',RUN=null;
+
+function resize(){
+  dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;
+  stage.width=Math.round(W*dpr);stage.height=Math.round(H*dpr);lastFrame=-1;
+}
+addEventListener('resize',resize);
+
+/* ---------------------------------------------------------------------
+   FORMATS - a figure keeps the precision it is shown at while it counts
+   --------------------------------------------------------------------- */
+const dollars=v=>v<10?'$'+v.toFixed(2):money(v);
+const whole=v=>Math.round(v).toLocaleString('en-US');
+const pct=v=>Math.round(v)+'%';
+const mean=xs=>xs.reduce((a,b)=>a+b,0)/xs.length;
+const MONTHS=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const month=iso=>{const d=new Date(iso);return MONTHS[d.getUTCMonth()]+' '+d.getUTCFullYear()};
+
+/* ---------------------------------------------------------------------
+   THE CARDS, each built from the run: {kicker, nums:[{v, fmt, ink, label}], note, curves|bars|marks}
+   --------------------------------------------------------------------- */
+function cards(run){
+  const F=run.finale,T=F.passes.with_fees.traders,N=F.passes.no_fees.traders;
+  const real=T.real_champions,scr=T.scrambled_champions,n=real.each.length,hold=T.buy_and_hold.final_equity;
+  const vault='THE VAULT · '+month(F.first_time)+' TO '+month(F.last_time);
+  const foot=`EVERY TRADER STARTS WITH ${money(run.start_cash)} · FEES ${F.passes.with_fees.fee_bps} BPS A SIDE · FROM THE LOGS OF RUN ${F.run}`;
+  const beat=(each,bar)=>each.filter(v=>v>bar).length;
+  const llm=T.llm,said=llm.replies.counts,asked=llm.replies.asked;
+  const nf=N.real_champions,nfHold=N.buy_and_hold.final_equity;
+  const apart=Math.min(...real.each)>Math.max(...scr.each);
+  return {
+    S1:{kicker:vault,foot,
+        nums:[{v:real.final_equity,fmt:dollars,ink:'cyan',label:`THE ${n} REAL CHAMPIONS, ON AVERAGE`},
+              {v:hold,fmt:dollars,ink:'ghost',label:'JUST HOLDING BITCOIN'}],
+        note:`${beat(real.each,hold)} OF ${n} REAL CHAMPIONS BEAT HOLDING`,
+        curves:[[real.curve,'cyan'],[T.buy_and_hold.curve,'ghost']]},
+    S2:{kicker:vault,foot,
+        nums:[{v:real.final_equity,fmt:dollars,ink:'cyan',label:`REAL WIRING, ${n} CHAMPIONS`},
+              {v:scr.final_equity,fmt:dollars,ink:'magenta',label:`SCRAMBLED WIRING, ${scr.each.length} CHAMPIONS`}],
+        note:apart?'EVERY REAL CHAMPION FINISHED ABOVE EVERY SCRAMBLED ONE'
+                  :`${real.each.filter(v=>v>Math.max(...scr.each)).length} OF ${n} REAL CHAMPIONS ABOVE THE BEST SCRAMBLED ONE`,
+        curves:[[real.curve,'cyan'],[scr.curve,'magenta']]},
+    S3:{kicker:'THE VAULT · TRADES PER CHAMPION',foot,
+        nums:[{v:mean(real.trades),fmt:whole,ink:'cyan',label:'REAL WIRING, ON AVERAGE'},
+              {v:mean(scr.trades),fmt:whole,ink:'magenta',label:'SCRAMBLED WIRING, ON AVERAGE'}],
+        note:'EVERY TRADE PAYS THE FEE',
+        bars:[[real.trades,'cyan'],[scr.trades,'magenta']]},
+    S4:{kicker:vault,foot,
+        nums:[{v:T.momentum.final_equity,fmt:dollars,ink:'ghost',label:`MOMENTUM · ${whole(T.momentum.trades)} TRADES`},
+              {v:T.random.final_equity,fmt:dollars,ink:'ghost',label:`RANDOM · ${whole(T.random.trades)} TRADES`}],
+        note:`BOTH STARTED WITH ${money(run.start_cash)}`,
+        curves:[[T.momentum.curve,'ghost'],[T.random.curve,'slate']]},
+    S5:{kicker:'THE VAULT · THE LOCAL LANGUAGE MODEL',foot,
+        nums:[{v:llm.final_equity,fmt:dollars,ink:'ghost',label:`${F.llm.model} · ASKED EVERY ${F.llm.bars_between_decisions*run.bar_minutes} MINUTES`},
+              {v:100*said.HOLD/asked,fmt:pct,ink:'ghost',label:'OF ITS ANSWERS WERE HOLD'}],
+        note:`${whole(said.HOLD)} HOLDS IN ${whole(asked)} DECISIONS · ${whole(llm.trades)} TRADES`,
+        curves:[[llm.curve,'ghost'],[T.buy_and_hold.curve,'slate']]},
+    S6:{kicker:'THE VAULT · FEES SWITCHED OFF',foot:foot.replace(/FEES [\d.]+ BPS A SIDE/,'NO FEES'),
+        nums:[{v:nf.final_equity,fmt:dollars,ink:'cyan',label:`THE ${nf.each.length} REAL CHAMPIONS, ON AVERAGE`},
+              {v:beat(nf.each,nfHold),fmt:v=>Math.round(v)+' OF '+nf.each.length,ink:'cyan',label:`BEAT JUST HOLDING (${money(nfHold)})`}],
+        note:'THE SAME DECISIONS, WITHOUT THE COST OF MAKING THEM',
+        curves:[[nf.curve,'cyan'],[N.buy_and_hold.curve,'ghost']]},
+    S7:{end:true,lines:['FLY THROUGH','IT YOURSELF'],url:'TACDELGINEER.GITHUB.IO/HEDGEFLY'},
+  };
+}
+
+/* ---------------------------------------------------------------------
+   PLATES behind the type: the curves the numbers end on, drawn as they count
+   --------------------------------------------------------------------- */
+function curvePlate(pen,curves,u,box){
+  const all=curves.flatMap(([c])=>c),lo=Math.min(...all),hi=Math.max(...all),span=Math.max(hi-lo,1e-9);
+  for(const [c,ink] of curves){                  // one shared scale: no line is flattered by its own
+    const k=Math.max(2,Math.round(c.length*u)),pts=[];
+    for(let i=0;i<k;i++)pts.push([box.x+i/(c.length-1)*box.w,box.y+box.h-(c[i]-lo)/span*box.h]);
+    pen.line(pts,ink,2.2,{tone:.3,amp:.5});
+    const [x,y]=pts[pts.length-1];pen.dot(x,y,4,ink,.45);
+  }
+}
+function barPlate(pen,sets,u,box){
+  const top=Math.max(...sets.flatMap(([v])=>v)),rows=sets.reduce((a,[v])=>a+v.length,0),step=box.h/rows;
+  let r=0;
+  for(const [vals,ink] of sets)for(const v of vals){const y=box.y+(r++ +.5)*step;
+    pen.line([[box.x,y],[box.x+box.w*u*v/top,y]],ink,Math.max(2,step*.5),{tone:.2,amp:.4})}
+}
+function swarm(pen,t){
+  const R=stream('stat-swarm');
+  for(let k=0;k<26;k++){
+    const bx=rand(R,-2,16),by=rand(R,-10,14),sp=rand(R,.12,.4),ph=rand(R,0,TAU);
+    const i=bx+Math.sin(t*sp+ph)*2.4,j=by+Math.cos(t*sp*.8+ph)*1.6;
+    pen.fly(i,j,0,{t,pose:'hover',ink:k%5?'slate':'cyan',tone:k%5?.4:.7,scale:rand(R,.8,1.7),
+                   facing:Math.cos(t*sp+ph)>=0?1:-1,phase:ph,noShadow:true,glowStrength:.5});
+  }
+}
+
+/* ---------------------------------------------------------------------
+   DRAWING
+   --------------------------------------------------------------------- */
+const zoomFor=vertical=>Math.min(W/980,H/(vertical?1500:760))*(vertical?1.18:1);
+const fitSize=(strs,maxW,cap,gap)=>Math.min(cap,...strs.map(s=>maxW/(Math.max(1,s.length)*.62*(1+gap))));
+
+function drawNumbers(pen,card,t,vertical){
+  const u=ease(clamp(t/COUNT,0,1)),note=clamp((t-COUNT)/NOTE_IN,0,1),CAP=.83,gap=.22;
+  const half=vertical?400:650,top=vertical?-660:-352;
+  // the kicker, and its amber rule: these cards are the vault's results
+  textCentred(pen,card.kicker,[0,top],fitSize([card.kicker],2*half-60,vertical?24:22,.42),{ink:'ghost',tone:.7,w:1.6,gap:.42});
+  pen.line([[-170,top+40],[170,top+40]],'amber',3,{tone:.75,amp:1.2});
+
+  // the curves get a band of their own under the labels, so no line crosses a number
+  const plate=vertical?{x:-half+20,y:40,w:2*half-40,h:340}:{x:-half+30,y:-5,w:2*half-60,h:195};
+  if(card.curves)curvePlate(pen,card.curves,u,plate);
+  if(card.bars)barPlate(pen,card.bars,u,plate);
+
+  // the numbers: one size for both, so neither side of a comparison is set bigger
+  const finals=card.nums.map(x=>x.fmt(x.v)),colW=vertical?2*half-60:half-40;
+  const size=fitSize(finals,colW,vertical?190:170,gap);
+  card.nums.forEach((x,k)=>{
+    const cx=vertical?0:(k?1:-1)*half/2,y=vertical?(k?-250:-560):-268;
+    pen.halo(cx,y+size*CAP/2,size*.95,x.ink,.05);
+    textCentred(pen,x.fmt(x.v*u),[cx,y],size,{ink:x.ink,w:Math.max(4,size/26),gap,tone:1});
+    const ls=fitSize([x.label],colW,vertical?24:20,.42);
+    // the label sits below the tail of the $, which hangs under the line
+    textCentred(pen,x.label,[cx,y+size*1.2+14],ls,{ink:x.ink==='ghost'?'ghost':x.ink,tone:.8,w:1.5,gap:.42});
+  });
+  if(card.note&&note>0){
+    const ns=fitSize([card.note],2*half-60,vertical?30:30,.4),y=vertical?460:238;
+    textCentred(pen,card.note,[0,y],ns,{ink:'ghost',tone:.95*note,w:2.4,gap:.4});
+  }
+  const fs=fitSize([card.foot],2*half-40,vertical?15:14,.42);
+  textCentred(pen,card.foot,[0,vertical?640:335],fs,{ink:'ghost',tone:.45,w:1,gap:.42});
+}
+
+function drawEnd(pen,card,t,vertical){
+  swarm(pen,t);ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  const CAP=.83,size=fitSize(card.lines,vertical?720:1200,112,.26),y0=vertical?-190:-150;
+  card.lines.forEach((s,k)=>textCentred(pen,s,[0,y0+k*size*1.2],size,{ink:'ghost',w:5,gap:.26,tone:.92}));
+  const y=y0+card.lines.length*size*1.2+30;
+  const us=fitSize([card.url],vertical?760:1100,vertical?40:48,.3);
+  pen.line([[-340,y],[340,y]],'gold',3,{tone:.8,amp:1.4});
+  pen.halo(0,y+60,190+Math.sin(t*.9)*16,'gold',.05);
+  textCentred(pen,card.url,[0,y+40],us,{ink:'gold',w:3,gap:.3,tone:1});
+}
+
+function draw(frameNo){
+  const t=frameNo/FPS,boil=Math.floor(frameNo/BOIL_EVERY),vertical=document.body.classList.contains('vertical');
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=PAPER_CSS;ctx.fillRect(0,0,stage.width,stage.height);
+  const zoom=zoomFor(vertical);
+  ctx.setTransform(dpr*zoom,0,0,dpr*zoom,dpr*W/2,dpr*H/2);
+  const pen=makePen(ctx,{ox:-330,oy:vertical?-150:-190,boil});
+  const card=RUN&&cards(RUN)[CARD];
+  if(card){try{(card.end?drawEnd:drawNumbers)(pen,card,t,vertical)}catch(e){console.error(CARD,e)}}
+  ctx.globalCompositeOperation='source-over';ctx.setLineDash([]);
+  const ax=-W/2/zoom,ay=-H/2/zoom;
+  ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(ax,ay,W/zoom,H/zoom);
+  ctx.globalCompositeOperation='source-over';
+}
+
+function stepFrame(){
+  if(innerWidth!==W||innerHeight!==H)resize();
+  const f=Math.floor((NOW()-started)/1000*FPS);
+  if(f!==lastFrame){draw(f);lastFrame=f}
+}
+function tick(){if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(tick);stepFrame()}
+
+window.__hedgefly={ready:false,
+  step(ms){window.__HEDGEFLY_VCLOCK__=(window.__HEDGEFLY_VCLOCK__||0)+ms;stepFrame()},
+  card(id){CARD=id;started=NOW();lastFrame=-1},
+  cards:()=>RUN?Object.keys(cards(RUN)):[]};
+
+async function loadRun(){
+  if(window.__HEDGEFLY_RUN__)return window.__HEDGEFLY_RUN__;
+  const r=await fetch(qs.get('data')||'../hq/runs.json',{cache:'no-store'});
+  if(!r.ok)throw new Error('runs.json: '+r.status);return r.json();
+}
+if(qs.has('vertical'))document.body.classList.add('vertical');
+CARD=qs.get('card')||'S1';
+loadRun().then(run=>{
+  if(!run.finale)throw new Error('runs.json has no finale block; the stat cards read nothing else');
+  RUN=run;resize();started=NOW();window.__hedgefly.ready=true;
+  if(!window.__HEDGEFLY_VCLOCK_DRIVEN__)requestAnimationFrame(tick);else stepFrame();
+}).catch(e=>{console.error(e);document.body.textContent=String(e)});
+</script>
+</body></html>
