@@ -1,4 +1,4 @@
-<a href="[paste video URL]"><img src="docs/images/banner.jpg" alt="Real vs fake: fly brains x Bitcoin. Watch the video" width="100%"></a>
+<a href="https://www.youtube.com/watch?v=FZTktpYUHTI"><img src="docs/images/banner.jpg" alt="Real vs fake: fly brains x Bitcoin. Watch the video" width="100%"></a>
 
 # Hedgefly: Natural Selection Capital
 
@@ -10,7 +10,7 @@ tribe whose wiring was scrambled, then face six months of prices none of them ha
 **Walk through it yourself:** <https://tacdelgineer.github.io/hedgefly/> (drag to look around,
 number keys jump between rooms, I for the key list and credits)
 
-**Watch the video:** [paste video URL]
+**Watch the video:** [I Gave 100 Fruit Fly Brains $1,000 Each to Trade Bitcoin](https://www.youtube.com/watch?v=FZTktpYUHTI)
 
 The brains come from the MaleCNS v1.0 connectome and never change. Only the genome that connects
 market data to the brain, and brain output to trades, evolves. The run is told as a building of
@@ -25,7 +25,7 @@ isometric rooms drawn entirely in code, and every number on its walls is read fr
 <td width="50%"><img src="docs/screenshots/brain-room.jpg" alt="The Brain Room"><br><b>The Brain Room.</b> The fly's own wiring, and the same wiring shuffled.</td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/switchboard.jpg" alt="The Switchboard"><br><b>The Switchboard.</b> The genome: every dial a fly inherits, and the few a child had changed.</td>
+<td><img src="docs/screenshots/heros-desk.jpg" alt="The Hero's Desk"><br><b>The Hero's Desk.</b> The real tribe's best fly, its family line on the wall, and what its $1,000 became.</td>
 <td><img src="docs/screenshots/barcode-wall.jpg" alt="The Barcode Wall"><br><b>The Barcode Wall.</b> One column per fly, one row per generation: the whole run as a barcode.</td>
 </tr>
 <tr>
