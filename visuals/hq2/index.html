@@ -668,23 +668,36 @@ room({id:'model',col:2,row:0,w:7,d:7,h:3.2,
   }});
 
 /* =====================  THE ARCHIVE  =====================
-   One poster per generation, printed as each generation is judged. */
+   One poster per generation, printed as each generation is judged: its headline (the
+   narrator's when the run carries one, see headlineFor), its number, and three bars from the
+   logs. Four across and three down fill the long wall, big enough to read on film. */
+const WALL_UNIT=Math.hypot(TW/2,TH/2);                       // screen px per unit along a wall
+function fitLines(str,maxW,maxH,size){                       // the largest headline that fits the box
+  // Lines on a wall slant, so a short line's last word sits level with the next line's first
+  // ("REAL FLIES / LEAD" reads "REAL LEAD FLIES"): three words or fewer go one to a line.
+  const words=String(str).toUpperCase().split(/\s+/).filter(Boolean),stack=words.length<=3;
+  for(;;size*=.92){const lines=[];let line='';
+    for(const w of words){const next=line?line+' '+w:w;
+      if(!stack&&(textWidth(next,size,.3)<=maxW||!line))line=next;else{if(line)lines.push(line);line=w}}
+    if(line)lines.push(line);
+    const tall=(lines.length-1)*size*1.25/TZ+size/TZ;
+    if(size<3||(tall<=maxH&&lines.every(l=>textWidth(l,size,.3)<=maxW)))return {lines,size}}
+}
 room({id:'archive',col:3,row:1,w:8,d:7,h:3.2,
   style:{floor:['slate',.28],wall:['slate',.12],wall2:['slate',.15],planks:true},
   draw(pen,t,R){
     const p=pen.p;if(!RUN)return;
-    const n=RUN.generations,cols=6;
-    for(let g=0;g<n;g++){const c=g%cols,r=Math.floor(g/cols),u=.45+c*1.24,z=2.95-r*.66;
-      const printed=g<=GEN,here=g===GEN,frame=pen.wallQuad('i',u,z-.56,1.08,.56,.06);
+    const n=RUN.generations,cols=4,rows=Math.max(3,Math.ceil(n/cols)),W=1.86,gap=.1,H=(2.95-gap*(rows-1))/rows;
+    for(let g=0;g<n;g++){const c=g%cols,r=Math.floor(g/cols),u=.12+c*(W+gap),top=3.05-r*(H+gap),z=top-H;
+      const printed=g<=GEN,here=g===GEN,frame=pen.wallQuad('i',u,z,W,H,.06);
       pen.shape(frame,[printed?'slate':'paper',printed?.15:0],{w:here?1.5:.8,line:here?'gold':'ghost',lineTone:printed?.6:.22});
       if(!printed)continue;
-      const fr=RUN.frames[g],at=(du,dz)=>pen.wallQuad('i',u+du,z+dz,.01,.01,.08)[0];
-      text(pen,S3(g),at(.06,-.05),6.5,{wall:'i',ink:here?'gold':'ghost',w:.8});
-      const words=headlineFor(RUN,g).toUpperCase().split(' ');let line='',rows=[];
-      for(const w of words){if((line+' '+w).trim().length>16){rows.push(line);line=w}else line=(line+' '+w).trim()}rows.push(line);
-      rows.slice(0,2).forEach((s,k)=>text(pen,s,at(.34,-.06-k*.1),3.4,{wall:'i',tone:.8,w:.45}));
+      const fr=RUN.frames[g],at=(du,zz)=>pen.wallQuad('i',u+du,zz,.01,.01,.08)[0];
+      const {lines,size}=fitLines(headlineFor(RUN,g),(W-.16)*WALL_UNIT,H-.37,5.6);
+      lines.forEach((s,k)=>text(pen,s,at(.08,top-.07-k*size*1.25/TZ),size,{wall:'i',tone:.9,w:.6,gap:.3}));
+      text(pen,S3(g),at(W-.42,z+.26),6,{wall:'i',ink:here?'gold':'ghost',w:.8});
       [[fr.tribes.real.equity.median,'cyan'],[fr.tribes.scrambled.equity.median,'magenta'],[fr.heroes.real.equity,'gold']].forEach(([v,ink],k)=>
-        pen.tint(pen.wallQuad('i',u+.07,z-.5+k*.09,clamp((v-975)/70,.04,1)*.94,.055,.08),ink,.8));
+        pen.tint(pen.wallQuad('i',u+.08,z+.07+k*.07,clamp((v-975)/70,.04,1)*(W-.62),.045,.08),ink,.8));
     }
     text(pen,'THE ARCHIVE',pen.wallQuad('j',5.9,2.7,.01,.01,.08)[0],16,{wall:'j',w:1.4});
     text(pen,'ONE POSTER PER GENERATION',pen.wallQuad('j',5.9,2.2,.01,.01,.08)[0],7.5,{wall:'j',tone:.65});

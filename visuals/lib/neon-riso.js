@@ -353,11 +353,20 @@ function textCentred(pen,str,at,size,o={}){return text(pen,str,[at[0]-textWidth(
 const money=v=>'$'+Math.round(v).toLocaleString('en-US');
 
 /* =====================================================================
-   HEADLINES — chosen by rules from a generation's numbers; they carry none of their own.
+   HEADLINES — the narrator's, when the run carries one that passed the Fact Guard; otherwise
+   chosen by rules from a generation's numbers. Either way they carry no numbers of their own:
+   the model's "Generation N:" is dropped (the card prints the generation from the data), and a
+   narrator headline still holding a digit gives way to the rules.
    Shared by the poster cards and the Archive room so the two always agree.
    ===================================================================== */
+function toldHeadline(f){
+  const told=f.story&&f.story.headline;if(!told)return null;
+  const h=String(told).replace(/^\s*gen(?:eration)?\s*\d+\s*[:.\-–—]\s*/i,'').trim();
+  return h&&!/\d/.test(h)?h:null;
+}
 function headlineFor(run,g){
   const f=run.frames[g],prev=g?run.frames[g-1]:null,r=f.tribes.real,s=f.tribes.scrambled,h=f.heroes.real;
+  const told=toldHeadline(f);if(told)return told;
   if(g===0)return 'The swarm wakes up';
   if(h.origin==='newcomer')return 'A stranger takes the crown';
   if(h.generations_lived>=4)return 'The old guard holds';

@@ -84,7 +84,8 @@ function drawCard(run,g){
     text(pen,s.label,[lx,ly],Math.max(9,tall?vs*.34:vs*.26),{tone:.7,w:1})});
 
   // colophon: where the numbers came from
-  const src=(run.fake?'FAKE DATA · ':'')+'FROM THE LOGS OF RUN '+run.run_id+' · 4 FIXED DAYS · $1,000 A DAY';
+  const src=(run.fake?'FAKE DATA · ':'')+'FROM THE LOGS OF RUN '+run.run_id+' · 4 FIXED DAYS · $1,000 A DAY'+
+            (!qs.get('headline')&&toldHeadline(f)?' · HEADLINE BY THE LOCAL MODEL, FACT GUARD ON':'');
   text(pen,src,[m,H-m],Math.max(8,W*.009),{tone:.5,w:.9});
   ctx.globalCompositeOperation='screen';ctx.fillStyle=grain(ctx);ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation='source-over';
   document.title=`Hedgefly · generation ${f.generation} · ${posterHeadline(run,g)}`;
