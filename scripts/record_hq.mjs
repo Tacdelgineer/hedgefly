@@ -35,8 +35,11 @@ const out = resolve(repo, arg('out', 'results/film'));
 /* ---- the shots ------------------------------------------------------------------------- */
 function shotList(rooms, hasFinale) {
   const list = [{ name: '00_establishing', setup: "__hedgefly.shot('building',null,0);__hedgefly.play(true)", frames: seconds * 1.4 }];
-  rooms.forEach((r, k) => list.push({ name: `${String(k + 1).padStart(2, '0')}_${r}`,
-    setup: `__hedgefly.shot('room','${r}',0);__hedgefly.play(true)`, frames: seconds }));
+  // The Archive steps through every generation inside its shot, so the wall fills poster by
+  // poster; played at the usual pace, six seconds would print only the first two.
+  rooms.forEach((r, k) => list.push({ name: `${String(k + 1).padStart(2, '0')}_${r}`, fill: r === 'archive',
+    setup: r === 'archive' ? `__hedgefly.shot('room','${r}',0);__hedgefly.play(false);__hedgefly.gen(0)`
+                           : `__hedgefly.shot('room','${r}',0);__hedgefly.play(true)`, frames: seconds }));
   list.push({ name: `${String(rooms.length + 1).padStart(2, '0')}_hero_cam`, setup: "__hedgefly.shot('hero');__hedgefly.play(true)", frames: seconds * 2 });
   if (hasFinale) list.push({ name: `${String(rooms.length + 2).padStart(2, '0')}_finale`, finale: true,
     setup: `__hedgefly.shot('room','vault',0);__hedgefly.play(false);__hedgefly.gen(__hedgefly.generations()-1);__hedgefly.sel(1);__hedgefly.open(0)`, frames: seconds });
@@ -56,6 +59,7 @@ async function record(shape) {
     await loaded;
     for (let k = 0; k < 200 && !(await b.evaluate('!!(window.__hedgefly&&window.__hedgefly.ready)')); k++) await new Promise(r => setTimeout(r, 100));
     const rooms = await b.evaluate('__hedgefly.rooms()'), hasFinale = await b.evaluate('__hedgefly.hasFinale()');
+    const generations = await b.evaluate('__hedgefly.generations()');
     const ffmpeg = findFfmpeg(), made = [];
     for (const shot of shotList(rooms, hasFinale)) {
       const dir = join(out, shape, shot.name); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
@@ -73,6 +77,7 @@ async function record(shape) {
       }
       for (let f = 0; f < n; f++) {
         if (shot.finale) await b.evaluate(`__hedgefly.open(${Math.min(1, f / (n * .55)).toFixed(4)})`);
+        if (shot.fill) await b.evaluate(`__hedgefly.gen(${Math.min(generations - 1, Math.floor(f / (n * .8) * generations))})`);
         await b.evaluate(`__hedgefly.step(${(1000 / fps).toFixed(4)})`);
         const { data } = await b.page('Page.captureScreenshot', { format: 'png' });
         writeFileSync(join(dir, `frame_${String(f + 1).padStart(5, '0')}.png`), Buffer.from(data, 'base64'));
