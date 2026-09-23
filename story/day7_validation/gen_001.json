@@ -1,0 +1,19 @@
+{
+ "headline": "Real connectomes outperform scrambled wiring",
+ "narration": "The real tribe achieves a best final equity of 1022.37 with a fitness of 0.022123, while the scrambled tribe reaches 1019.96 with 0.01976 fitness. The real tribe executes 3745 total trades compared to the scrambled tribe's 6702.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Generation 1 Results",
+  "featured_room": "lab",
+  "stat_keys": [
+   "tribes.real.final_equity.best",
+   "tribes.real.fitness.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.scrambled.fitness.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 1,
+ "attempts": 1
+}

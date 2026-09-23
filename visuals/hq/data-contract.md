@@ -92,6 +92,10 @@ entry price the run logged, so a data file whose rows have moved cannot chart th
 - `trades` are fills per fixed day, averaged over the four days for a fly.
 - `heroes.<name>` is the fittest fly of the generation. `ancestors` runs from the founder to its
   parent, oldest first; it is empty for a founder or a newcomer, and never contains `id`.
+- `story` (optional) is `{"headline": "..."}`, the narrator's headline for the generation from
+  `story/<run_id>/gen_XXX.json`, re-checked by the Fact Guard when exported. Pages show it
+  through `headlineFor`, which drops a leading "Generation N:" and falls back to the rule-based
+  headline if a digit is left, so no number on screen is one a model typed.
 
 ## Version 3 additions
 

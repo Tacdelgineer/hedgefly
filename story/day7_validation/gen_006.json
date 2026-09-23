@@ -1,0 +1,17 @@
+{
+ "headline": "Generation 6: Real Connectomes Lead",
+ "narration": "The real tribe's best fly, real-f00454, reached a final equity of 1028.75 with a fitness of 0.028347. Its scrambled counterpart, scrambled-f00451, finished with 1025.67 equity and 0.025347 fitness.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Gen 6 Top Performers",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.fitness.best",
+   "tribes.scrambled.fitness.best"
+  ]
+ },
+ "generation": 6,
+ "attempts": 1
+}

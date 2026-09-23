@@ -14,6 +14,10 @@ it checks that the bar after the first one opens at the entry price the run logg
 re-fetched data file whose rows have moved is caught here instead of charting the wrong day.
 
 It never opens the locked test set; the finale writes its own file.
+
+If the narrator has written `story/<run_id>/gen_XXX.json`, each frame carries that generation's
+headline, and only the headline. It is put through the Fact Guard again here, against the same
+summary, so nothing the guard would reject can reach the page.
 """
 
 from __future__ import annotations
@@ -27,9 +31,11 @@ import numpy as np
 import pandas as pd
 
 from market import Wallet, load_evolve
+from story.validate import check as fact_guard
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO / "visuals" / "hq" / "runs.json"
+STORIES = REPO / "story"
 CONTRACT_VERSION = 4        # v4 = v3 + lineage, the trade tape, the champion replay and the eye
 TRIBES = ("real", "scrambled")
 COMPETITORS = ("momentum", "random", "buy_and_hold")
@@ -124,12 +130,32 @@ def newborn(log: dict, tribe: str, generation: int) -> dict:
     return counts
 
 
-def frame_of(summary: dict, log: dict) -> dict:
+def story_of(stories: Path, summary: dict) -> dict | None:
+    """The narrator's headline for this generation, if it wrote one (story/narrator.py).
+
+    The narration stays out: the page prints the headline alone, and a model-typed number in
+    it is dropped by the page (headlineFor), so every number on screen is read from the data."""
+    path = stories / f"gen_{summary['generation']:03d}.json"
+    if not path.exists():
+        return None
+    story = json.loads(path.read_text())
+    verdict = fact_guard(story, summary)
+    if not verdict.ok:
+        raise SystemExit(f"{path}: the Fact Guard rejects it against this summary: "
+                         f"{'; '.join(verdict.problems)}")
+    return {"headline": story["headline"]}
+
+
+def frame_of(summary: dict, log: dict, stories: Path | None = None) -> dict:
     g = summary["generation"]
     tribes = {t: tribe_frame(summary, log, t) | {"born": newborn(log, t, g)} for t in TRIBES}
-    return {"generation": summary["generation"],
-            "tribes": tribes,
-            "heroes": {t: hero_frame(summary, t) for t in TRIBES}}
+    frame = {"generation": summary["generation"],
+             "tribes": tribes,
+             "heroes": {t: hero_frame(summary, t) for t in TRIBES}}
+    story = story_of(stories, summary) if stories else None
+    if story:
+        frame["story"] = story
+    return frame
 
 
 def window_of(day: dict, evolve: pd.DataFrame | None) -> dict:
@@ -579,7 +605,10 @@ def main() -> None:
                    help="a run directory holding finale.json (default: --run's own, if it has one)")
     p.add_argument("--finale-rehearsal", action="store_true",
                    help="use the finale's rehearsal files, to build the finale visuals before the real one exists")
+    p.add_argument("--stories", type=Path, default=None,
+                   help="the narrator's stories for this run (default: story/<run_id>/, if it exists)")
     args = p.parse_args()
+    stories = args.stories or STORIES / args.run.name
 
     manifest = json.loads((args.run / "manifest.json").read_text())
     if "windows" not in manifest:
@@ -591,7 +620,7 @@ def main() -> None:
     frames, tree_rows, last_log = [], {t: [] for t in TRIBES}, None
     for summary_path, log_path in generations(args.run):
         summary, log = json.loads(summary_path.read_text()), json.loads(log_path.read_text())
-        frames.append(frame_of(summary, log))
+        frames.append(frame_of(summary, log, stories if stories.is_dir() else None))
         for tribe in TRIBES:
             tree_rows[tribe].append(lineage_row(log, tribe))
         last_log = log
@@ -638,6 +667,9 @@ def main() -> None:
     last = frames[-1]
     print(f"{args.out} : {len(frames)} generations, {len(payload['windows'])} fixed days, "
           f"{payload['population']} flies a tribe, {args.out.stat().st_size / 1024:.0f} KB")
+    told = sum(1 for f in frames if "story" in f)
+    if told:
+        print(f"narrator headlines for {told} of {len(frames)} generations, from {stories}")
     extras = [k for k in ("validation_windows", "brain", "run", "locked", "finale",
                           "lineage", "tape", "replay", "eye") if k in payload]
     if extras:

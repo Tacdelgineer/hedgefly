@@ -1,0 +1,17 @@
+{
+ "headline": "Generation 11: Real flies lead with 1030.02 equity",
+ "narration": "The real tribe's best individual, real-f00902, holds final_equity of 1030.02, outperforming the scrambled tribe's top scorer at 1028.06. While the scrambled group executes 4398 total trades compared to the real group's 1410, their median fitness remains lower.",
+ "poster": {
+  "title": "Connectome Advantage",
+  "subtitle": "Generation 11 Results",
+  "featured_room": "brain_room",
+  "stat_keys": [
+   "tribes.real.final_equity.best",
+   "tribes.scrambled.final_equity.best",
+   "tribes.real.trades.total",
+   "tribes.scrambled.trades.total"
+  ]
+ },
+ "generation": 11,
+ "attempts": 1
+}
